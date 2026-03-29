@@ -45,4 +45,4 @@ backend/src/data/inventory.json
 openclaw-plugin-private-cloud-manager/node_modules/
 
 # Screenshots and local docs exports
-docs/screenshots/*.tmp
+
