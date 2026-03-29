@@ -1,0 +1,48 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.user
+*.swp
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.crt
+
+# Node / JS
+node_modules/
+dist/
+build/
+.turbo/
+.cache/
+coverage/
+
+# Vite / frontend cache
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backend runtime artifacts
+backend/node_modules/
+backend/dist/
+backend/dev.db
+backend/dev.db-journal
+backend/src/data/inventory.json
+
+# OpenClaw plugin local artifacts
+openclaw-plugin-private-cloud-manager/node_modules/
+
+# Screenshots and local docs exports
+docs/screenshots/*.tmp

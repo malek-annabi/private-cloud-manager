@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model HealthCheck {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+}
+
+enum VMType {
+  PERSISTENT
+  TEMPLATE
+  EPHEMERAL
+}
+
+model Pool {
+  id        String   @id
+  name      String
+  basePath  String
+  createdAt DateTime @default(now())
+}
+
+model Job {
+  id        String   @id @default(uuid())
+  type      String
+  status    String
+  payload   String
+  result    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model JobLog {
+  id        String   @id @default(uuid())
+  jobId     String
+  message   String
+  level     String
+  createdAt DateTime @default(now())
+}
+
+model AuditEvent {
+  id        String   @id @default(uuid())
+  action    String
+  actor     String
+  resource  String
+  metadata  String
+  createdAt DateTime @default(now())
+}
+
+model VM {
+  id          String   @id
+  name        String
+  vmxPath     String
+  type        VMType
+  poolId      String?
+
+  sshHost     String?
+  sshPort     Int?
+  sshUser     String?
+  sshKeyPath  String?
+  sshPassword String?
+
+  createdAt   DateTime @default(now())
+}

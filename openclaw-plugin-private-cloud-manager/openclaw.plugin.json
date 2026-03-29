@@ -1,0 +1,27 @@
+{
+  "id": "private-cloud-manager",
+  "name": "Private Cloud Manager",
+  "version": "0.1.0",
+  "description": "Registers OpenClaw agent tools for VMware VM inventory, jobs, and SSH actions backed by the local private-cloud-manager API.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "Base URL for the private-cloud-manager backend API.",
+        "default": "http://127.0.0.1:8000/api"
+      },
+      "token": {
+        "type": "string",
+        "description": "Bearer token used to authenticate to the backend API. Can also be provided with the PCM_TOKEN environment variable."
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "description": "HTTP timeout for backend API requests in milliseconds.",
+        "default": 15000,
+        "minimum": 1000
+      }
+    },
+    "additionalProperties": false
+  }
+}
