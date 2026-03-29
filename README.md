@@ -18,6 +18,7 @@ It combines:
 ## Highlights
 
 - Manage VMware Workstation Pro VMs from a browser
+- Build toward real-time VM power visibility such as on/off state
 - Execute VM lifecycle operations through a job system
 - Track job status and logs in one place
 - Open an SSH terminal directly inside the dashboard
@@ -319,9 +320,11 @@ If the OpenClaw plugin later becomes generic enough to support multiple backends
 
 ## Roadmap
 
+- VM current power state visibility (`on` / `off`)
 - richer VM status reporting
 - snapshot lifecycle support
 - frontend audit view
+- authentication and access management
 - stronger SSH policy controls
 - approval flows for sensitive actions
 - multi-host support

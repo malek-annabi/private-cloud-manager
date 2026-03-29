@@ -168,11 +168,13 @@ Later, if the OpenClaw plugin becomes generic enough to support multiple backend
 
 Potential next steps for the project include:
 
+- VM current state visibility for power status such as on and off
 - richer VM status and health reporting
 - snapshot lifecycle management
 - approval flows for sensitive actions
 - improved policy enforcement for SSH commands
 - audit views in the frontend
+- authentication and access management
 - role-based access controls
 - multi-host inventory
 - automation and scheduled jobs
@@ -183,4 +185,3 @@ Potential next steps for the project include:
 Private Cloud Manager turns a locally hosted VMware environment into a structured, extensible operations platform. It combines a web dashboard, a job-oriented backend, browser-based SSH access, and an AI tool layer powered by OpenClaw and Ollama.
 
 It is a strong example of local infrastructure treated with real platform engineering principles, and it shows how AI can be integrated into infrastructure workflows in a controlled and practical way.
-
