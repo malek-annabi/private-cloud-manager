@@ -21,6 +21,8 @@ The frontend currently provides:
 - per-VM `last online` and `last SSH login` activity indicators
 - start and stop actions with state-aware buttons
 - editable SSH connection details
+- managed Ubuntu server update action with OS version and patch metadata
+- automatic OS metadata refresh after interactive SSH login
 - jobs view with timestamps and detail logs
 - audit view with action metadata
 - multi-session browser SSH with tabbed terminals

@@ -5,7 +5,8 @@ interface SSHOptions {
   host: string;
   port: number;
   username: string;
-  privateKeyPath: string;
+  privateKeyPath?: string;
+  password?: string;
   command: string;
   timeoutMs?: number;
 }
@@ -59,7 +60,10 @@ export function executeSSH(options: SSHOptions): Promise<{
         host: options.host,
         port: options.port,
         username: options.username,
-        privateKey: fs.readFileSync(options.privateKeyPath),
+        privateKey: options.privateKeyPath
+          ? fs.readFileSync(options.privateKeyPath)
+          : undefined,
+        password: options.password,
       });
   });
 }

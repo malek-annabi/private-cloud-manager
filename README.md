@@ -19,6 +19,8 @@ It combines:
 
 - Live VM power state in the dashboard
 - Per-VM `last online` and `last SSH login` activity indicators
+- Ubuntu-aware server update action with OS version, `last updated`, and reboot-required visibility
+- Automatic OS metadata refresh on interactive SSH connect
 - Job-based start and stop orchestration with logs and timestamps
 - Audit view for operator actions and API activity
 - Token-gated web interface
@@ -70,6 +72,8 @@ Responsibilities:
 - expose token-gated access to the operator UI
 - show jobs, logs, and audit activity
 - let operators update SSH connection details
+- trigger managed Ubuntu server updates
+- refresh OS family, version, and reboot-needed state on SSH connect
 - provide a multi-session browser SSH workspace
 
 ### `backend/`
@@ -81,6 +85,8 @@ Responsibilities:
 - load and persist VM inventory
 - expose VM, job, audit, and readiness APIs
 - execute VMware operations through `vmrun`
+- run managed Ubuntu package update jobs
+- refresh remote OS metadata on successful interactive SSH login
 - process background job handlers
 - expose interactive SSH sessions over WebSocket
 - record audit events and VM activity timestamps
@@ -194,6 +200,7 @@ Important backend notes:
 - API auth uses a bearer token
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
+- Ubuntu VMs can be updated through a managed job instead of ad hoc SSH commands
 
 ### Frontend
 

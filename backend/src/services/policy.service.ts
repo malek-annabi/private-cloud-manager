@@ -18,6 +18,10 @@ export function requiresApproval(jobType: string): boolean {
   ].includes(jobType);
 }
 
+export function canUpdateServer(vm: any) {
+  return vm.type !== "TEMPLATE";
+}
+
 const ALLOWED_COMMANDS = [
   "whoami",
   "hostname",

@@ -65,6 +65,10 @@ model VM {
   poolId      String?
   lastSeenOnlineAt DateTime?
   lastSshLoginAt   DateTime?
+  osFamily    String?
+  osVersion   String?
+  lastUpdatedAt DateTime?
+  rebootRequired Boolean @default(false)
 
   sshHost     String?
   sshPort     Int?

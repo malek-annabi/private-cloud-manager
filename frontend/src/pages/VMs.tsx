@@ -7,7 +7,7 @@ import {
   updateVmConnection,
   updateVmTags,
 } from "../api/vms";
-import { startVM, stopVM } from "../api/jobs";
+import { startVM, stopVM, updateVM } from "../api/jobs";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
@@ -24,6 +24,7 @@ export default function VMs() {
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
   const [savingTagsFor, setSavingTagsFor] = useState<string | null>(null);
   const [runningActionFor, setRunningActionFor] = useState<string | null>(null);
+  const [updatingVmId, setUpdatingVmId] = useState<string | null>(null);
   const [editingConnectionVmId, setEditingConnectionVmId] = useState<string | null>(null);
   const [openSshAfterSave, setOpenSshAfterSave] = useState(false);
   const [connectionDraft, setConnectionDraft] = useState({
@@ -38,6 +39,9 @@ export default function VMs() {
     total: data.length,
     running: data.filter((vm) => vm.powerState === "ON").length,
     stopped: data.filter((vm) => vm.powerState === "OFF").length,
+    rebootRequired: data.filter((vm) => vm.rebootRequired).length,
+    updatedThisWeek: data.filter((vm) => isWithinWindow(vm.lastUpdatedAt, 7 * 24)).length,
+    sshThisDay: data.filter((vm) => isWithinWindow(vm.lastSshLoginAt, 24)).length,
   };
   const activeSession =
     activeSessionId != null
@@ -57,6 +61,22 @@ export default function VMs() {
 
     return timestamps[0] ?? null;
   }, [data]);
+  const latestUpdate = useMemo(() => {
+    const timestamps = data
+      .map((vm) => vm.lastUpdatedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime());
+
+    return timestamps[0] ?? null;
+  }, [data]);
+  const sshHeatmap = useMemo(
+    () => buildHourlyHeatmap(data.map((vm) => vm.lastSshLoginAt), 12),
+    [data],
+  );
+  const updateHeatmap = useMemo(
+    () => buildDailyHeatmap(data.map((vm) => vm.lastUpdatedAt), 7),
+    [data],
+  );
   const visibleVms = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const powerRank = {
@@ -152,6 +172,17 @@ export default function VMs() {
       await queryClient.invalidateQueries({ queryKey: ["jobs"] });
     } finally {
       setRunningActionFor(null);
+    }
+  };
+
+  const runVmUpdate = async (vmId: string) => {
+    setUpdatingVmId(vmId);
+
+    try {
+      await updateVM(vmId, { mode: "full", autoremove: true });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    } finally {
+      setUpdatingVmId(null);
     }
   };
 
@@ -294,7 +325,7 @@ export default function VMs() {
 
   return (
     <div className="space-y-8 p-6">
-      <div className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
+      <div className="grid gap-4">
         <Card className="overflow-hidden border-white/10 bg-white/5">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(45,212,191,0.16),transparent_40%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.12),transparent_38%)]" />
           <div className="relative space-y-4">
@@ -317,12 +348,62 @@ export default function VMs() {
             </div>
           </div>
         </Card>
+      </div>
 
-        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-          <StatCard label="Total VMs" value={stats.total} tone="info" />
-          <StatCard label="Running now" value={stats.running} tone="success" />
-          <StatCard label="Powered off" value={stats.stopped} tone="warning" />
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          <StatCard label="Total" value={stats.total} tone="info" compact />
+          <StatCard label="Running" value={stats.running} tone="success" compact />
+          <StatCard label="Off" value={stats.stopped} tone="warning" compact />
+          <StatCard
+            label="Need reboot"
+            value={stats.rebootRequired}
+            tone={stats.rebootRequired > 0 ? "danger" : "neutral"}
+            compact
+          />
+          <StatCard
+            label="Updated 7d"
+            value={stats.updatedThisWeek}
+            tone="info"
+            compact
+          />
+          <StatCard
+            label="SSH 24h"
+            value={stats.sshThisDay}
+            tone="success"
+            compact
+          />
         </div>
+
+        <Card className="border-white/10 bg-white/5">
+          <div className="space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                  Fleet cadence
+                </p>
+                <h2 className="mt-2 text-lg font-semibold text-white">
+                  Recent SSH and update activity
+                </h2>
+              </div>
+              <div className="text-right text-xs text-slate-400">
+                <div>Last SSH: <span className="text-slate-200">{latestSshLogin ? formatRelativeDate(latestSshLogin) : "Never"}</span></div>
+                <div>Last update: <span className="text-slate-200">{latestUpdate ? formatRelativeDate(latestUpdate) : "Never"}</span></div>
+              </div>
+            </div>
+
+            <HeatRow
+              label="SSH timeline"
+              cells={sshHeatmap}
+              emptyLabel="No recent SSH logins"
+            />
+            <HeatRow
+              label="Update timeline"
+              cells={updateHeatmap}
+              emptyLabel="No recent updates"
+            />
+          </div>
+        </Card>
       </div>
 
       <Card className="border-white/10 bg-white/5">
@@ -527,6 +608,8 @@ export default function VMs() {
           const canOpenSsh = vm.powerState === "ON";
           const canStartVm = vm.powerState !== "ON";
           const canStopVm = vm.powerState === "ON";
+          const canUpdateVm = vm.powerState === "ON" && vm.osFamily?.toLowerCase() === "ubuntu";
+          const isUpdating = updatingVmId === vm.id;
 
           return (
             <Card
@@ -546,6 +629,7 @@ export default function VMs() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <PowerBadge powerState={vm.powerState} />
+                      {vm.rebootRequired ? <Badge label="Reboot required" tone="danger" /> : null}
                       {vm.sshHost ? (
                         <Badge
                           label={`${vm.sshUser ?? "user"}@${vm.sshHost}:${vm.sshPort ?? 22}`}
@@ -575,6 +659,14 @@ export default function VMs() {
                   <InfoRow
                     label="Last SSH login"
                     value={vm.lastSshLoginAt ? formatRelativeDate(vm.lastSshLoginAt) : "Never"}
+                  />
+                  <InfoRow
+                    label="OS"
+                    value={vm.osVersion ?? vm.osFamily ?? "Unknown"}
+                  />
+                  <InfoRow
+                    label="Last updated"
+                    value={vm.lastUpdatedAt ? formatRelativeDate(vm.lastUpdatedAt) : "Never"}
                   />
                 </div>
 
@@ -651,11 +743,23 @@ export default function VMs() {
                   >
                     Edit connection
                   </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={!canUpdateVm || isUpdating}
+                    onClick={() => runVmUpdate(vm.id)}
+                  >
+                    {isUpdating ? "Queueing update..." : "Update server"}
+                  </Button>
                 </div>
 
                 {!canOpenSsh && isOpeningSessionFor !== vm.id ? (
                   <p className="text-sm text-amber-200/90">
                     SSH can boot this VM and connect automatically when it becomes ready.
+                  </p>
+                ) : null}
+                {!canUpdateVm ? (
+                  <p className="text-sm text-slate-400">
+                    Server updates are currently available for running Ubuntu VMs.
                   </p>
                 ) : null}
               </div>
@@ -922,18 +1026,53 @@ function StatCard({
   label,
   value,
   tone,
+  compact = false,
 }: {
   label: string;
   value: number;
-  tone: "success" | "warning" | "info";
+  tone: "neutral" | "success" | "warning" | "info" | "danger";
+  compact?: boolean;
 }) {
   return (
-    <Card className="border-white/10 bg-white/5">
+    <Card className={`border-white/10 bg-white/5 ${compact ? "p-4" : ""}`}>
       <div className="space-y-2">
         <Badge label={label} tone={tone} />
-        <div className="text-3xl font-semibold text-white">{value}</div>
+        <div className={compact ? "text-2xl font-semibold text-white" : "text-3xl font-semibold text-white"}>
+          {value}
+        </div>
       </div>
     </Card>
+  );
+}
+
+function HeatRow({
+  label,
+  cells,
+  emptyLabel,
+}: {
+  label: string;
+  cells: number[];
+  emptyLabel: string;
+}) {
+  const hasActivity = cells.some((value) => value > 0);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-sm text-slate-300">{label}</span>
+        <span className="text-xs text-slate-500">
+          {hasActivity ? "More glow means more recent fleet activity" : emptyLabel}
+        </span>
+      </div>
+      <div className="grid grid-cols-12 gap-2">
+        {cells.map((value, index) => (
+          <div
+            key={`${label}-${index}`}
+            className={`h-6 rounded-xl border border-white/5 ${getHeatCellTone(value)}`}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -992,4 +1131,83 @@ function formatLastOnline(vm: VmRecord) {
   }
 
   return "Never detected online";
+}
+
+function isWithinWindow(value: string | null | undefined, hours: number) {
+  if (!value) {
+    return false;
+  }
+
+  return Date.now() - new Date(value).getTime() <= hours * 3_600_000;
+}
+
+function buildHourlyHeatmap(values: Array<string | null | undefined>, hours: number) {
+  const cells = Array.from({ length: hours }, () => 0);
+  const now = Date.now();
+
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+
+    const deltaHours = Math.floor((now - new Date(value).getTime()) / 3_600_000);
+    if (deltaHours < 0 || deltaHours >= hours) {
+      return;
+    }
+
+    const bucketIndex = hours - 1 - deltaHours;
+    cells[bucketIndex] += 1;
+  });
+
+  return normalizeHeatmap(cells);
+}
+
+function buildDailyHeatmap(values: Array<string | null | undefined>, days: number) {
+  const cells = Array.from({ length: days }, () => 0);
+  const now = Date.now();
+
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+
+    const deltaDays = Math.floor((now - new Date(value).getTime()) / 86_400_000);
+    if (deltaDays < 0 || deltaDays >= days) {
+      return;
+    }
+
+    const bucketIndex = days - 1 - deltaDays;
+    cells[bucketIndex] += 1;
+  });
+
+  return normalizeHeatmap(cells);
+}
+
+function normalizeHeatmap(cells: number[]) {
+  const max = Math.max(...cells, 0);
+  if (max === 0) {
+    return cells;
+  }
+
+  return cells.map((value) => Math.ceil((value / max) * 4));
+}
+
+function getHeatCellTone(value: number) {
+  if (value <= 0) {
+    return "bg-slate-900/70";
+  }
+
+  if (value === 1) {
+    return "bg-teal-500/20";
+  }
+
+  if (value === 2) {
+    return "bg-teal-400/35";
+  }
+
+  if (value === 3) {
+    return "bg-cyan-400/45";
+  }
+
+  return "bg-cyan-300/70";
 }

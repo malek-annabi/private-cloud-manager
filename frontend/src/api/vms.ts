@@ -8,6 +8,10 @@ export type VmRecord = {
   tags: string[];
   lastSeenOnlineAt?: string | null;
   lastSshLoginAt?: string | null;
+  osFamily?: string | null;
+  osVersion?: string | null;
+  lastUpdatedAt?: string | null;
+  rebootRequired?: boolean;
   vmxPath: string;
   sshHost?: string | null;
   sshPort?: number | null;

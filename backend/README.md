@@ -23,6 +23,8 @@ The backend is responsible for:
 - exposing interactive SSH sessions over WebSocket
 - persisting job logs and audit events
 - tracking VM activity such as `last seen online` and `last SSH login`
+- running managed Ubuntu update jobs and persisting patch metadata
+- refreshing remote OS family/version and reboot-needed state on interactive SSH connect
 
 ## Important Routes
 
@@ -37,6 +39,7 @@ The backend is responsible for:
 - `POST /api/jobs/start-vm`
 - `POST /api/jobs/stop-vm`
 - `POST /api/jobs/ssh`
+- `POST /api/jobs/update-vm`
 - `GET /api/audit`
 
 ## Database Model

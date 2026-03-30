@@ -29,6 +29,11 @@ export const startVM = (vmId: string) =>
 export const stopVM = (vmId: string) =>
   api.post("/jobs/stop-vm", { vmId });
 
+export const updateVM = (
+  vmId: string,
+  options?: { mode?: "security" | "full"; autoremove?: boolean },
+) => api.post("/jobs/update-vm", { vmId, ...options });
+
 export const sshExec = (vmId: string, command: string) =>
   api.post("/jobs/ssh", { vmId, command });
 

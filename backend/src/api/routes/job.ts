@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   canStartVM,
   canDeleteVM,
+  canUpdateServer,
 } from "../../services/policy.service";
 
 const router = Router();
@@ -20,6 +21,12 @@ const startStopSchema = z.object({
 const snapshotSchema = z.object({
   vmId: z.string().min(1),
   snapshotName: z.string().min(1),
+});
+
+const updateVmSchema = z.object({
+  vmId: z.string().min(1),
+  mode: z.enum(["security", "full"]).optional(),
+  autoremove: z.boolean().optional(),
 });
 
 
@@ -145,6 +152,37 @@ router.post(
 
       const job = await createJob("VM_SNAPSHOT", parsed.data);
 
+      res.json(job);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.post(
+  "/update-vm",
+  auditMiddleware("UPDATE_VM_OS"),
+  async (req, res) => {
+    try {
+      const parsed = updateVmSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid payload" });
+      }
+
+      const vm = await prisma.vM.findUnique({
+        where: { id: parsed.data.vmId },
+      });
+
+      if (!vm) {
+        return res.status(404).json({ error: "VM not found" });
+      }
+
+      if (!canUpdateServer(vm)) {
+        return res.status(403).json({ error: "Policy denied" });
+      }
+
+      const job = await createJob("VM_OS_UPDATE", parsed.data);
       res.json(job);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

@@ -190,6 +190,23 @@ async function executeGetJobStatus(
   return textResult(formatJobDetail(payload));
 }
 
+async function executeUpdateVm(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const job = await apiRequest(ctx, "/jobs/update-vm", {
+    method: "POST",
+    body: JSON.stringify({
+      vmId: params.vmId,
+      mode: params.mode ?? "full",
+      autoremove: params.autoremove ?? true,
+    }),
+  });
+
+  return textResult(`Update server job queued.\n${formatJobSummary(job)}`);
+}
+
 const privateCloudManagerPlugin = {
   id: PLUGIN_ID,
   name: "Private Cloud Manager",
@@ -311,6 +328,39 @@ const privateCloudManagerPlugin = {
         return executeGetJobStatus(toolCallId, params, ctx);
       },
     }), { name: "pcm_get_job_status" });
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_update_vm",
+        label: "PCM Update VM",
+        description:
+          "Queue a managed Ubuntu server update job for a VM by id.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "The VM id to update, for example ubuntu-web.",
+            },
+            mode: {
+              type: "string",
+              enum: ["security", "full"],
+              description: "Whether to run only security updates or a full package upgrade.",
+            },
+            autoremove: {
+              type: "boolean",
+              description: "Whether to run apt autoremove as part of the update flow.",
+            },
+          },
+          required: ["vmId"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeUpdateVm(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
   },
 };
 

@@ -16,6 +16,8 @@ Today the system provides:
 - job-based lifecycle actions with logs and timestamps
 - audit visibility for actions and API activity
 - a browser-based multi-tab SSH workspace
+- a managed Ubuntu server update workflow with OS version and patch metadata
+- automatic OS metadata refresh on interactive SSH connect
 - an OpenClaw plugin for local AI-assisted operations through Ollama
 
 ## Architecture
@@ -80,6 +82,7 @@ The dashboard now shows:
 - whether a VM is running, off, or unknown
 - when a VM was last seen online
 - when a VM last accepted an interactive SSH login
+- the latest detected OS version after SSH contact or managed updates
 
 That makes the system feel much more like a real control plane than a static inventory list.
 
@@ -108,6 +111,14 @@ The SSH experience evolved from a single embedded terminal into a tabbed operato
 - boot a powered-off VM and connect automatically once SSH is reachable
 
 This is one of the biggest usability improvements in the project so far.
+
+### Managed Ubuntu Updates
+
+Because most of the environment runs Ubuntu Server 22.04 or 24.04, the platform now exposes a first-class update operation instead of relying on arbitrary SSH commands. The backend can queue a managed update job, run package maintenance over SSH, detect the current OS version, persist `last updated` metadata, and record whether a reboot is required.
+
+That keeps patching on the same audited backend path as the rest of the platform.
+
+The platform also refreshes OS family, OS version, and reboot-needed state whenever an interactive SSH session is established. That keeps VM metadata current even if a machine was patched outside the dashboard.
 
 ### AI Operations Layer
 

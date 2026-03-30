@@ -9,6 +9,7 @@ This plugin lets OpenClaw call the existing private-cloud-manager backend as a s
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
+- `pcm_update_vm`
 
 These tools call the backend routes that already exist today:
 
@@ -17,6 +18,7 @@ These tools call the backend routes that already exist today:
 - `POST /api/jobs/stop-vm`
 - `POST /api/jobs/ssh`
 - `GET /api/jobs/:id`
+- `POST /api/jobs/update-vm`
 
 ## Suggested OpenClaw config
 
@@ -76,4 +78,5 @@ Use Ollama as the OpenClaw model provider, then allow the assistant to use the `
 
 - `pcm_ssh_exec` still goes through your backend approval and SSH policy logic.
 - `pcm_start_vm` and `pcm_stop_vm` create normal backend jobs, so the dashboard and OpenClaw stay in sync.
+- `pcm_update_vm` queues a managed Ubuntu server update job through the same backend job and audit flow.
 - If you later add snapshot, release, cancel, audit, or live terminal tools, this plugin is the right place to expose them.
