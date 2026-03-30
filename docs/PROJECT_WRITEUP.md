@@ -2,69 +2,54 @@
 
 ## Title
 
-Private Cloud Manager: A Local VMware Control Plane with Web UI, Job Orchestration, SSH Access, and OpenClaw Integration
+Private Cloud Manager: A Local VMware Control Plane with Real-Time Status, Browser SSH, Auditability, and OpenClaw Integration
 
 ## Overview
 
-Private Cloud Manager is a local infrastructure management platform built for operating VMware Workstation Pro virtual machines hosted on a single machine.
+Private Cloud Manager is a local infrastructure platform for operating VMware Workstation Pro virtual machines hosted on a single machine. The goal is to treat a workstation-based private cloud with real platform engineering ideas instead of relying only on the VMware GUI, scattered scripts, and manual SSH workflows.
 
-The project was designed to solve a very practical problem: once a homelab or private-cloud setup grows beyond a few VMs, managing everything through the VMware GUI, ad hoc scripts, and terminal windows becomes slow, repetitive, and hard to audit. This project introduces a structured control plane on top of that local environment.
+Today the system provides:
 
-Instead of treating local VMs as isolated desktops, the system treats them like manageable infrastructure:
+- a token-gated operator dashboard
+- live VM power-state visibility
+- per-VM `last online` and `last SSH login` activity signals
+- job-based lifecycle actions with logs and timestamps
+- audit visibility for actions and API activity
+- a browser-based multi-tab SSH workspace
+- an OpenClaw plugin for local AI-assisted operations through Ollama
 
-- inventory is centralized
-- actions are routed through a backend API
-- operations become jobs with status and logs
-- SSH access is available from the browser
-- AI tooling can act on the environment through a controlled interface
-
-## Goals
-
-The project focuses on five main goals:
-
-1. Make local VMware VMs manageable through a dedicated web dashboard.
-2. Replace direct manual operations with a backend job orchestration model.
-3. Provide browser-based SSH access for day-to-day management tasks.
-4. Keep an audit trail of actions and system behavior.
-5. Extend the platform with an AI operations layer using OpenClaw and Ollama.
-
-## System Design
+## Architecture
 
 The project is organized into three components.
 
-### 1. Frontend
+### Frontend
 
 The frontend is built with React, Vite, TypeScript, React Query, React Router, Axios, Tailwind CSS, and `xterm`.
 
-It provides the operator-facing interface for:
+It is responsible for:
 
-- viewing VM inventory
-- triggering start and stop operations
-- monitoring queued and running jobs
-- reading job logs
-- opening an SSH session to a VM directly from the browser
+- VM inventory and live power-state presentation
+- token-gated UI access
+- jobs and audit views
+- editable SSH connection details
+- multi-session browser SSH with tabbed terminals
 
-The frontend is intentionally thin. It does not execute infrastructure actions directly. Instead, it delegates all operational behavior to the backend API.
+### Backend
 
-### 2. Backend
-
-The backend is built with Express, TypeScript, Prisma, SQLite, `ssh2`, `ws`, and VMware's `vmrun` tooling.
+The backend is built with Express, TypeScript, Prisma, SQLite, `ssh2`, `ws`, and VMware `vmrun`.
 
 It is responsible for:
 
-- exposing the VM and job APIs
-- loading inventory into a local database
-- executing VM lifecycle actions
-- processing SSH command jobs
-- managing a WebSocket-based interactive SSH session
-- storing job state and logs
-- recording audit events
+- normalizing inventory into the local database
+- exposing VM, job, audit, and SSH readiness APIs
+- executing VM lifecycle operations
+- running background workers for job processing
+- exposing WebSocket-based interactive SSH sessions
+- recording audit events and VM activity timestamps
 
-This separation is important because it creates a real control plane. The UI, future automation, and AI assistants all use the same backend surface instead of bypassing it.
+### OpenClaw Plugin
 
-### 3. OpenClaw Plugin
-
-The OpenClaw plugin exposes the platform to an AI assistant as a set of explicit tools:
+The OpenClaw plugin exposes the backend as explicit tools:
 
 - `pcm_list_vms`
 - `pcm_start_vm`
@@ -72,58 +57,61 @@ The OpenClaw plugin exposes the platform to an AI assistant as a set of explicit
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
 
-OpenClaw runs with a local Ollama model, while the plugin turns the backend into an operational tool layer. This means the assistant does not need direct access to VMware or the host shell to perform actions. It operates through the same API and job system that the human dashboard uses.
-
-That is a strong architectural choice because it keeps policy, logging, and operational behavior centralized.
+This keeps the AI layer on the same backend pathways as the human UI instead of giving the model direct host-shell control.
 
 ## Workflow
 
-The overall workflow is:
+The current operator flow is:
 
-1. VM metadata is defined in inventory and loaded into the backend database.
-2. The frontend calls the backend API to list VMs or create jobs.
-3. The backend creates job records and background workers process them.
-4. Job logs and status updates are stored and exposed through API endpoints.
-5. The frontend polls for updates and presents them in the dashboard.
-6. OpenClaw can call the same backend operations through the plugin tools.
+1. VM metadata is defined in the local inventory and loaded into the backend database.
+2. The frontend lists VMs, jobs, and audit activity from backend APIs.
+3. Start and stop requests become jobs that are processed by the worker.
+4. The frontend polls for updates and surfaces state, logs, and timestamps.
+5. SSH can be opened directly from the dashboard.
+6. If a VM is powered off, the SSH workspace can start it, wait for SSH readiness, and then open a terminal tab automatically.
+7. OpenClaw can call the same operational backend through named tools.
 
 ## Notable Features
 
-### Inventory-Driven VM Management
+### Live VM State and Activity
 
-VMs are registered in a structured inventory file and loaded into the local database. This makes the environment discoverable and manageable through a consistent model rather than relying on manual per-VM handling.
+The dashboard now shows:
 
-### Job-Based Operations
+- whether a VM is running, off, or unknown
+- when a VM was last seen online
+- when a VM last accepted an interactive SSH login
 
-Actions such as starting or stopping a VM are represented as jobs. This gives the platform:
+That makes the system feel much more like a real control plane than a static inventory list.
 
-- better operational visibility
-- retry and approval potential
-- auditability
-- a cleaner future path toward scheduling or automation
+### Job Visibility
 
-### Browser-Based SSH
+Lifecycle operations are represented as jobs with:
 
-The platform includes an SSH terminal inside the web interface using WebSockets and `xterm`, which makes it possible to access a VM without leaving the dashboard.
+- queued and running states
+- created and updated timestamps
+- per-job logs
+- a detail view for execution history
+
+This gives the platform clearer observability and a stronger path toward approvals, retries, and automation.
+
+### Audit Trail
+
+The backend records audit events and the frontend exposes them through a dedicated audit page. That gives the platform traceability across VM actions, job execution, and API operations.
+
+### Browser SSH Workspace
+
+The SSH experience evolved from a single embedded terminal into a tabbed operator workspace:
+
+- open multiple SSH tabs
+- open multiple tabs for the same VM
+- edit SSH connection details from the UI
+- boot a powered-off VM and connect automatically once SSH is reachable
+
+This is one of the biggest usability improvements in the project so far.
 
 ### AI Operations Layer
 
-By connecting the backend to OpenClaw through a custom plugin, the project extends from a dashboard into an AI-assisted infrastructure management platform. A local model running in Ollama can inspect inventory and invoke controlled operations through named tools.
-
-This is one of the strongest aspects of the project because it demonstrates how local AI can be integrated into infrastructure management without giving the model unsafe direct shell access.
-
-## Technical Challenges Solved
-
-Several practical issues had to be handled during development:
-
-- designing a clean separation between UI, orchestration, and execution
-- building a WebSocket SSH bridge for interactive terminal access
-- handling job state and logs in a simple local-first architecture
-- integrating VMware command execution through `vmrun`
-- exposing the platform to OpenClaw in a way that the assistant can use reliably
-- debugging plugin registration and runtime config flow in OpenClaw
-
-The OpenClaw integration was especially interesting because it required aligning the plugin implementation with the runtime conventions actually used by OpenClaw's working built-in extensions.
+By integrating OpenClaw and Ollama through a custom plugin, the project supports local AI-assisted operations without bypassing the backend. The model does not execute directly on the host; it uses explicit tools that call the same backend APIs as the human interface.
 
 ## Why This Project Matters
 
@@ -134,27 +122,24 @@ This project sits at the intersection of:
 - local-first tooling
 - AI-assisted operations
 
-It shows that "private cloud" does not always need to mean a large distributed system. Even a VMware Workstation environment on a single host can benefit from platform thinking: inventory, API surfaces, orchestration, logging, policy, and operator tooling.
+It shows that even a VMware Workstation environment on a single machine can benefit from platform thinking:
 
-It also demonstrates a realistic pattern for AI integration:
+- inventory
+- APIs
+- orchestration
+- logs
+- auditability
+- controlled AI tooling
+
+It also demonstrates a practical AI pattern:
 
 - keep AI out of direct host execution paths
 - expose safe operational tools instead
-- reuse the same backend used by humans
+- reuse the same backend surface used by humans
 
-## Recommended GitHub Publishing Strategy
+## Recommended GitHub Strategy
 
-The best current strategy is a single repository with three top-level folders.
-
-Why this is the best fit:
-
-- the frontend, backend, and plugin belong to one product
-- the OpenClaw plugin is tightly coupled to the backend API
-- a single repo makes the architecture easier to understand
-- it simplifies setup, documentation, and demos
-- it keeps the project narrative coherent for GitHub and LinkedIn readers
-
-Recommended structure:
+The best fit remains one repository with:
 
 - `/frontend`
 - `/backend`
@@ -162,26 +147,22 @@ Recommended structure:
 - `/docs`
 - root `README.md`
 
-Later, if the OpenClaw plugin becomes generic enough to support multiple backends, it can be extracted into a standalone repository.
+That keeps the architecture coherent, the setup simple, and the project story easy to understand for contributors, recruiters, and other builders.
 
 ## Future Directions
 
-Potential next steps for the project include:
+Likely next steps include:
 
-- VM current state visibility for power status such as on and off
-- richer VM status and health reporting
+- transitional VM states such as `booting` and `stopping`
+- richer SSH readiness diagnostics
 - snapshot lifecycle management
+- stronger authentication and access management
 - approval flows for sensitive actions
-- improved policy enforcement for SSH commands
-- audit views in the frontend
-- authentication and access management
-- role-based access controls
-- multi-host inventory
-- automation and scheduled jobs
-- natural-language operational workflows through OpenClaw
+- more OpenClaw tools and natural-language workflows
+- multi-host support
 
 ## Summary
 
-Private Cloud Manager turns a locally hosted VMware environment into a structured, extensible operations platform. It combines a web dashboard, a job-oriented backend, browser-based SSH access, and an AI tool layer powered by OpenClaw and Ollama.
+Private Cloud Manager turns a locally hosted VMware environment into a structured and extensible operations platform. It combines a modern web dashboard, a job-oriented backend, browser-based SSH, audit visibility, and an AI tool layer powered by OpenClaw and Ollama.
 
-It is a strong example of local infrastructure treated with real platform engineering principles, and it shows how AI can be integrated into infrastructure workflows in a controlled and practical way.
+The project is a strong example of local infrastructure treated with real platform engineering principles, while keeping the AI integration practical and controlled.

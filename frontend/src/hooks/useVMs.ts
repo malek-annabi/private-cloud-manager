@@ -5,6 +5,6 @@ export function useVMs() {
   return useQuery({
     queryKey: ["vms"],
     queryFn: fetchVMs,
-    refetchInterval: 5000,
+    refetchInterval: 3000,
   });
 }

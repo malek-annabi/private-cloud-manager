@@ -1,16 +1,14 @@
+import { Badge } from "../ui/Badge";
+
 export function JobStatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    SUCCEEDED: "bg-green-600",
-    FAILED: "bg-red-600",
-    RUNNING: "bg-yellow-500",
-    PENDING: "bg-gray-500",
-    HELD: "bg-purple-600",
-    CANCELLED: "bg-gray-700",
+  const tones: Record<string, "success" | "danger" | "warning" | "neutral" | "info"> = {
+    SUCCEEDED: "success",
+    FAILED: "danger",
+    RUNNING: "warning",
+    PENDING: "neutral",
+    HELD: "info",
+    CANCELLED: "neutral",
   };
 
-  return (
-    <span className={`px-2 py-1 rounded text-xs ${map[status]}`}>
-      {status}
-    </span>
-  );
+  return <Badge label={status} tone={tones[status] ?? "neutral"} />;
 }

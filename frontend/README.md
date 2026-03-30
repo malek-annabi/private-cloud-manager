@@ -1,73 +1,67 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The frontend is the operator-facing dashboard for Private Cloud Manager.
 
-Currently, two official plugins are available:
+Built with:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React
+- Vite
+- TypeScript
+- React Query
+- React Router
+- Tailwind CSS
+- `xterm`
 
-## React Compiler
+## What It Does
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The frontend currently provides:
 
-## Expanding the ESLint configuration
+- token-gated access to the web interface
+- live VM inventory with power-state visibility
+- per-VM `last online` and `last SSH login` activity indicators
+- start and stop actions with state-aware buttons
+- editable SSH connection details
+- jobs view with timestamps and detail logs
+- audit view with action metadata
+- multi-session browser SSH with tabbed terminals
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Main Areas
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- `src/pages/VMs.tsx`
+  - inventory view
+  - SSH tab workspace
+  - activity indicators
+  - tag and connection editing
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- `src/pages/Jobs.tsx`
+  - recent job activity
+  - job status and timestamps
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- `src/pages/JobDetail.tsx`
+  - detailed job log timeline
+
+- `src/pages/Audit.tsx`
+  - audit trail for operator and API actions
+
+- `src/components/ssh/Terminal.tsx`
+  - browser SSH terminal built on `xterm`
+
+## Run Locally
+
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Default URL:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```text
+http://127.0.0.1:5173
 ```
+
+## Notes
+
+- The frontend talks to the backend at `http://127.0.0.1:8000/api`
+- API auth is bearer-token based
+- VM state and jobs are refreshed through polling
+- SSH sessions are opened over WebSocket through the backend

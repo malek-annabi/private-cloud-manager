@@ -111,6 +111,21 @@ export function startSSHServer(server: any) {
         conn.on("ready", () => {
           logger.info({ vmId: vm.id }, "SSH connected");
           safeSend("\r\nSSH connection established.\r\n");
+          void prisma.vM.update({
+            where: { id: vm.id },
+            data: { lastSshLoginAt: new Date() } as never,
+          }).catch((err) => {
+            if (
+              err instanceof Error &&
+              err.name === "PrismaClientValidationError" &&
+              err.message.includes("Unknown argument `lastSshLoginAt`")
+            ) {
+              logger.warn({ vmId: vm.id }, "Skipping lastSshLoginAt update because the running Prisma client is stale");
+              return;
+            }
+
+            logger.error({ err, vmId: vm.id }, "Failed to update last SSH login");
+          });
 
           conn!.shell((err, stream) => {
             if (err) {

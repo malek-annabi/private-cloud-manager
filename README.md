@@ -1,48 +1,42 @@
 # Private Cloud Manager
 
-![Status](https://img.shields.io/badge/status-in%20progress-2563eb)
+![Status](https://img.shields.io/badge/status-active-16a34a)
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61dafb)
 ![Backend](https://img.shields.io/badge/backend-Express%20%2B%20TypeScript-111827)
 ![Database](https://img.shields.io/badge/database-Prisma%20%2B%20SQLite-2d3748)
 ![VMware](https://img.shields.io/badge/virtualization-VMware%20Workstation%20Pro-607078)
 ![AI Ops](https://img.shields.io/badge/AI%20ops-OpenClaw%20%2B%20Ollama-16a34a)
 
-Private Cloud Manager is a local-first VM control plane for managing VMware Workstation Pro virtual machines from a dedicated web dashboard instead of relying only on the VMware GUI, scattered scripts, and manual terminal workflows.
+Private Cloud Manager is a local-first VM control plane for VMware Workstation Pro. It turns a workstation-based private cloud into a real operator platform with inventory, APIs, jobs, audit logs, browser SSH, and an AI tool layer through OpenClaw.
 
 It combines:
 
-- a React frontend for inventory, jobs, and browser-based SSH
-- an Express backend for orchestration, VMware control, and audit logging
+- a React frontend for inventory, jobs, audit, authentication, and browser-based SSH
+- an Express backend for orchestration, VMware control, VM activity tracking, and audit logging
 - an OpenClaw plugin so a local Ollama-powered assistant can operate the platform through structured tools
 
 ## Highlights
 
-- Manage VMware Workstation Pro VMs from a browser
-- Build toward real-time VM power visibility such as on/off state
-- Execute VM lifecycle operations through a job system
-- Track job status and logs in one place
-- Open an SSH terminal directly inside the dashboard
-- Keep a centralized VM inventory
-- Expose the platform to OpenClaw through explicit AI tools
-- Reuse the same backend for both human and AI operators
+- Live VM power state in the dashboard
+- Per-VM `last online` and `last SSH login` activity indicators
+- Job-based start and stop orchestration with logs and timestamps
+- Audit view for operator actions and API activity
+- Token-gated web interface
+- Editable SSH connection details from the dashboard
+- Multi-tab browser SSH workspace with same-VM parallel tabs
+- Auto boot-and-connect flow for powered-off VMs
+- OpenClaw integration on top of the same backend used by the UI
 
 ## Why I Built It
 
-Once a local lab grows past a handful of VMs, day-to-day operations start to become noisy:
+Once a local lab grows past a few VMs, operating everything through the VMware GUI, one-off shell commands, and scattered notes becomes noisy and fragile. I wanted the same qualities we expect from internal platform tooling, but applied to a local VMware environment:
 
-- too many terminal tabs
-- too many one-off commands
-- too much dependence on the VMware GUI
-- no consistent job history or audit trail
-
-This project brings platform engineering ideas to a local VMware environment by adding:
-
-- inventory
-- APIs
-- orchestration
-- logs
-- browser access
-- AI-assisted operations
+- centralized inventory
+- consistent APIs
+- observable jobs
+- browser-based access
+- auditability
+- AI-assisted operations without direct shell trust
 
 ## Screenshots
 
@@ -56,7 +50,7 @@ Add screenshots to `docs/screenshots/` and update the image paths below.
 
 ![Jobs View](./docs/screenshots/jobs-view.png)
 
-### Browser SSH Terminal
+### Browser SSH Workspace
 
 ![SSH Terminal](./docs/screenshots/ssh-terminal.png)
 
@@ -72,10 +66,11 @@ React + Vite + TypeScript + React Query + Tailwind CSS + `xterm`
 
 Responsibilities:
 
-- display VM inventory
-- start and stop VM jobs
-- show job detail and logs
-- provide interactive SSH access over WebSocket
+- display VM inventory and live power state
+- expose token-gated access to the operator UI
+- show jobs, logs, and audit activity
+- let operators update SSH connection details
+- provide a multi-session browser SSH workspace
 
 ### `backend/`
 
@@ -84,96 +79,11 @@ Express + TypeScript + Prisma + SQLite + `ssh2` + `ws`
 Responsibilities:
 
 - load and persist VM inventory
-- expose VM and job APIs
+- expose VM, job, audit, and readiness APIs
 - execute VMware operations through `vmrun`
-- run background job handlers
-- expose WebSocket SSH sessions
-- record audit events
-
-#### How Prisma and the Database Work
-
-Prisma is the ORM layer that defines and accesses the local SQLite database used by the backend.
-
-In this project, Prisma is responsible for:
-
-- defining the database schema in `backend/prisma/schema.prisma`
-- generating the Prisma client used by the application
-- reading and writing VM, job, job log, and audit event records
-- keeping database access consistent across the backend
-
-At runtime, the backend uses a local SQLite database file:
-
-```text
-backend/dev.db
-```
-
-The main tables and what they do:
-
-- `VM`: stores the normalized VM inventory the backend operates on
-- `Job`: stores queued, running, failed, and completed operations
-- `JobLog`: stores per-job logs for observability
-- `AuditEvent`: stores action traces for auditing
-
-The inventory file is not the database itself. Instead, the flow is:
-
-1. you define VMs in `backend/src/data/inventory.json`
-2. the backend reads that file on startup
-3. `inventory.service.ts` upserts those records into the `VM` table
-4. the frontend and plugin then operate on the database records
-
-So `inventory.json` is the source input, while Prisma + SQLite are the operational state layer.
-
-### Inventory File and Public Example
-
-The real inventory file can contain confidential information such as:
-
-- internal IP addresses
-- VM paths
-- SSH usernames
-- SSH passwords
-- SSH private key paths
-
-Because of that, the real file should stay local and out of Git.
-
-Use this local file for your actual environment:
-
-```text
-backend/src/data/inventory.json
-```
-
-Use this public example as the template:
-
-```text
-backend/src/data/inventory.example.json
-```
-
-To create your own inventory:
-
-1. Copy `inventory.example.json` to `inventory.json`
-2. Replace the example VM ids, names, and `.vmx` paths
-3. Add either `password` or `privateKeyPath` for SSH-enabled VMs
-4. Keep `inventory.json` private and untracked
-
-Inventory format example:
-
-```json
-{
-  "vms": [
-    {
-      "id": "wireguard",
-      "name": "WireGuard Gateway",
-      "vmxPath": "D:\\Vms\\WireGuard\\wireguard.vmx",
-      "type": "PERSISTENT",
-      "ssh": {
-        "host": "192.168.1.60",
-        "port": 22,
-        "user": "root",
-        "password": "replace-me"
-      }
-    }
-  ]
-}
-```
+- process background job handlers
+- expose interactive SSH sessions over WebSocket
+- record audit events and VM activity timestamps
 
 ### `openclaw-plugin-private-cloud-manager/`
 
@@ -186,6 +96,61 @@ OpenClaw plugin that exposes the backend as tools:
 - `pcm_get_job_status`
 
 This lets a local OpenClaw assistant running on top of Ollama interact with the same backend APIs used by the frontend.
+
+## How Prisma and the Database Work
+
+Prisma is the ORM layer that defines and accesses the local SQLite database used by the backend.
+
+The project uses a local SQLite file:
+
+```text
+backend/dev.db
+```
+
+The main records are:
+
+- `VM`: normalized VM inventory plus live operational metadata
+- `Job`: queued, running, failed, and completed operations
+- `JobLog`: execution logs for each job
+- `AuditEvent`: traceable operator and API actions
+
+The inventory file is not the database. The flow is:
+
+1. you define VMs in `backend/src/data/inventory.json`
+2. the backend reads that file on startup
+3. `inventory.service.ts` upserts those records into the `VM` table
+4. the frontend and OpenClaw plugin operate on the database-backed records
+
+So `inventory.json` is the bootstrap source, while Prisma + SQLite represent the live operational state.
+
+## Inventory File and Public Example
+
+The real inventory file can contain confidential information such as:
+
+- internal IP addresses
+- VM paths
+- SSH usernames
+- SSH passwords
+- SSH private key paths
+
+Because of that, the real file stays local and out of Git:
+
+```text
+backend/src/data/inventory.json
+```
+
+The committed template for other builders is:
+
+```text
+backend/src/data/inventory.example.json
+```
+
+To create your own inventory:
+
+1. Copy `inventory.example.json` to `inventory.json`
+2. Replace the example VM ids, names, and `.vmx` paths
+3. Add either `password` or `privateKeyPath` for SSH-enabled VMs
+4. Keep `inventory.json` private and untracked
 
 ## Project Structure
 
@@ -208,16 +173,17 @@ This lets a local OpenClaw assistant running on top of Ollama interact with the 
 - Ollama installed locally if you want the AI integration
 - OpenClaw installed locally if you want the AI tool workflow
 
-### 1. Backend Setup
+### Backend
 
 ```bash
 cd backend
 npm install
-npm run prisma:generate
+npx prisma generate
+npx prisma db push
 npm run dev
 ```
 
-The backend runs by default at:
+Default backend URL:
 
 ```text
 http://127.0.0.1:8000
@@ -225,12 +191,11 @@ http://127.0.0.1:8000
 
 Important backend notes:
 
-- the real VM inventory is defined locally in `backend/src/data/inventory.json`
-- the public template lives in `backend/src/data/inventory.example.json`
 - API auth uses a bearer token
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
+- the backend tracks VM state, SSH readiness, jobs, and audit activity
 
-### 2. Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
@@ -238,13 +203,13 @@ npm install
 npm run dev
 ```
 
-The frontend runs by default at:
+Default frontend URL:
 
 ```text
 http://127.0.0.1:5173
 ```
 
-### 3. OpenClaw Plugin Setup
+### OpenClaw Plugin
 
 Install the local plugin:
 
@@ -252,17 +217,7 @@ Install the local plugin:
 openclaw plugins install -l D:\Projects\private-cloud-manager\openclaw-plugin-private-cloud-manager
 ```
 
-Then configure OpenClaw to enable:
-
-- plugin id: `private-cloud-manager`
-- tool names:
-  - `pcm_list_vms`
-  - `pcm_start_vm`
-  - `pcm_stop_vm`
-  - `pcm_ssh_exec`
-  - `pcm_get_job_status`
-
-And add plugin config:
+Example plugin config:
 
 ```json
 {
@@ -280,51 +235,40 @@ And add plugin config:
 
 ## Design Choices
 
-One of the strongest architectural decisions in this project is that the AI layer does not directly control the host. Instead:
+One of the strongest decisions in this project is that the AI layer does not directly control the host. Instead:
 
 - the assistant uses explicit tools
-- the tools call the backend API
+- those tools call the backend API
 - the backend remains the single execution layer
 
-That keeps policy, logging, and operational behavior centralized.
+That keeps policy, logging, and operational behavior centralized for both human and AI operators.
 
 ## Community
 
-This project is not just about building something useful for my own environment. I want it to be understandable, reusable, and valuable to other people building local labs, private-cloud tooling, and AI-assisted operations workflows.
+This project is not just for my own environment. I want it to be understandable, reusable, and useful to other people building local labs, private-cloud tooling, and AI-assisted operations workflows.
 
-That is why the public version of the repository includes:
+That is why the public repo includes:
 
 - a real project writeup
 - a safe inventory example instead of leaking private infrastructure details
-- a documented architecture across frontend, backend, and OpenClaw integration
+- architecture documentation across frontend, backend, and OpenClaw integration
 - a structure that other builders can adapt to their own VMware environments
 
-My goal is to contribute something practical to the community: a concrete example of how local infrastructure, platform engineering, and local AI tooling can work together in a clean and controlled way.
-
-## Repository Strategy
-
-The recommended GitHub strategy for this project is **one repository** with three top-level folders.
-
-Why one repo is the right choice:
-
-- the frontend, backend, and plugin are one product
-- the plugin is tightly coupled to the backend API
-- setup and demos are simpler in one place
-- the architecture is easier for readers and recruiters to understand
-
-If the OpenClaw plugin later becomes generic enough to support multiple backends, it can be extracted into its own repository.
+The goal is to contribute something practical to the community: a concrete example of how local infrastructure, platform engineering, and local AI tooling can work together in a clean and controlled way.
 
 ## Documentation
 
 - [Project writeup](./docs/PROJECT_WRITEUP.md)
+- [Frontend notes](./frontend/README.md)
+- [Backend notes](./backend/README.md)
+- [OpenClaw plugin notes](./openclaw-plugin-private-cloud-manager/README.md)
 
 ## Roadmap
 
-- VM current power state visibility (`on` / `off`)
-- richer VM status reporting
+- transitional VM states such as `booting` and `stopping`
 - snapshot lifecycle support
-- frontend audit view
-- authentication and access management
+- richer SSH readiness and connection diagnostics
+- authentication and access management beyond a single token
 - stronger SSH policy controls
 - approval flows for sensitive actions
 - multi-host support

@@ -19,6 +19,7 @@ for (const vm of data.vms) {
       name: vm.name,
       vmxPath: vm.vmxPath,
       type: vm.type,
+      tags: JSON.stringify(vm.tags ?? []),
 
       sshHost: vm.ssh?.host,
       sshPort: vm.ssh?.port,
@@ -31,6 +32,7 @@ for (const vm of data.vms) {
       name: vm.name,
       vmxPath: vm.vmxPath,
       type: vm.type,
+      tags: JSON.stringify(vm.tags ?? []),
 
       sshHost: vm.ssh?.host,
       sshPort: vm.ssh?.port,

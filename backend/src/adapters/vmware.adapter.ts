@@ -18,3 +18,22 @@ export async function vmStop(vmxPath: string) {
 export async function vmSnapshot(vmxPath: string, name: string) {
   return execFileAsync(VMRUN_PATH, ["snapshot", vmxPath, name]);
 }
+
+export async function listRunningVMs() {
+  const { stdout } = await execFileAsync(VMRUN_PATH, ["list"]);
+
+  return stdout
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export async function getVmPowerState(vmxPath: string) {
+  try {
+    const runningVms = await listRunningVMs();
+    return runningVms.includes(vmxPath) ? "ON" : "OFF";
+  } catch {
+    return "UNKNOWN";
+  }
+}

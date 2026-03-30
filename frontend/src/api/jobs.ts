@@ -1,6 +1,24 @@
 import { api } from "./client";
 
-export const fetchJobs = async () => {
+export type JobRecord = {
+  id: string;
+  type: string;
+  status: string;
+  payload: string;
+  result?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type JobLogRecord = {
+  id: string;
+  jobId: string;
+  message: string;
+  level: string;
+  createdAt: string;
+};
+
+export const fetchJobs = async (): Promise<JobRecord[]> => {
   const res = await api.get("/jobs");
   return res.data;
 };
@@ -20,7 +38,9 @@ export const releaseJob = (jobId: string) =>
 export const cancelJob = (jobId: string) =>
   api.post(`/jobs/${jobId}/cancel`);
 
-export const fetchJobDetail = async (jobId: string) => {
+export const fetchJobDetail = async (
+  jobId: string,
+): Promise<{ job: JobRecord; logs: JobLogRecord[] }> => {
   const res = await api.get(`/jobs/${jobId}`);
   return res.data;
 };

@@ -61,7 +61,10 @@ model VM {
   name        String
   vmxPath     String
   type        VMType
+  tags        String   @default("[]")
   poolId      String?
+  lastSeenOnlineAt DateTime?
+  lastSshLoginAt   DateTime?
 
   sshHost     String?
   sshPort     Int?

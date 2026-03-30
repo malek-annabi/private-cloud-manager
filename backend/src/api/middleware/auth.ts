@@ -26,3 +26,15 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
 
   next();
 }
+
+export function getBearerToken(header?: string) {
+  if (!header) return null;
+
+  const [type, token] = header.split(" ");
+
+  if (type !== "Bearer" || !token) {
+    return null;
+  }
+
+  return token;
+}
