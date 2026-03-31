@@ -100,6 +100,7 @@ OpenClaw plugin that exposes the backend as tools:
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
+- `pcm_update_vm`
 
 This lets a local OpenClaw assistant running on top of Ollama interact with the same backend APIs used by the frontend.
 
@@ -156,7 +157,8 @@ To create your own inventory:
 1. Copy `inventory.example.json` to `inventory.json`
 2. Replace the example VM ids, names, and `.vmx` paths
 3. Add either `password` or `privateKeyPath` for SSH-enabled VMs
-4. Keep `inventory.json` private and untracked
+4. Optionally add OS hints such as Ubuntu family/version so update actions are available immediately
+5. Keep `inventory.json` private and untracked
 
 ## Project Structure
 
@@ -178,6 +180,7 @@ To create your own inventory:
 - one or more VMs configured in the backend inventory
 - Ollama installed locally if you want the AI integration
 - OpenClaw installed locally if you want the AI tool workflow
+- SSH enabled on guest VMs you want to access or update through the dashboard
 
 ### Backend
 
@@ -201,6 +204,7 @@ Important backend notes:
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
 - Ubuntu VMs can be updated through a managed job instead of ad hoc SSH commands
+- interactive SSH logins refresh `lastSshLoginAt`, OS family, OS version, and reboot-required state
 
 ### Frontend
 
@@ -214,6 +218,77 @@ Default frontend URL:
 
 ```text
 http://127.0.0.1:5173
+```
+
+The frontend asks for the backend token at login and stores it in the browser for the current operator session.
+
+### Ollama
+
+Install and start Ollama locally, then pull at least one model that behaves reasonably with tools.
+
+Example:
+
+```powershell
+ollama serve
+ollama pull qwen2.5:7b-instruct-q4_K_M
+```
+
+Default Ollama URL used by OpenClaw:
+
+```text
+http://127.0.0.1:11434
+```
+
+Models can vary a lot in tool-following quality. In practice, smaller models may still invent recap text around correct tool calls, so test and compare.
+
+### OpenClaw
+
+Install OpenClaw locally and point it at your local Ollama instance.
+
+Core pieces to configure:
+
+1. Model provider:
+
+```json
+{
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "api": "ollama"
+      }
+    }
+  }
+}
+```
+
+2. Workspace:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "C:\\Users\\<you>\\.openclaw\\workspace"
+    }
+  }
+}
+```
+
+3. Plugin loading and allowlist:
+
+```json
+{
+  "plugins": {
+    "allow": [
+      "private-cloud-manager"
+    ],
+    "load": {
+      "paths": [
+        "D:\\Projects\\private-cloud-manager\\openclaw-plugin-private-cloud-manager"
+      ]
+    }
+  }
+}
 ```
 
 ### OpenClaw Plugin
@@ -234,11 +309,50 @@ Example plugin config:
 }
 ```
 
+Add the PCM tools to the OpenClaw agent allowlist:
+
+```json
+[
+  "pcm_list_vms",
+  "pcm_start_vm",
+  "pcm_stop_vm",
+  "pcm_ssh_exec",
+  "pcm_get_job_status",
+  "pcm_update_vm"
+]
+```
+
+After changing plugin code, reinstall it from the local folder and restart OpenClaw:
+
+```powershell
+openclaw plugins install -l D:\Projects\private-cloud-manager\openclaw-plugin-private-cloud-manager
+```
+
+Recommended local OpenClaw workspace files:
+
+- `USER.md` with who the operator is and what they care about
+- `IDENTITY.md` for the assistant persona
+- `TOOLS.md` with environment-specific tool-grounding rules
+
+These files do not make the tools work, but they improve consistency and reduce unhelpful narration.
+
+## End-to-End Setup Flow
+
+1. Configure `backend/src/data/inventory.json` from `inventory.example.json`
+2. Start the backend and let Prisma create/sync the SQLite database
+3. Start the frontend and verify you can log in with the backend token
+4. Verify VM listing, power-state refresh, and SSH access from the browser UI
+5. Start Ollama and pull a model
+6. Install and configure OpenClaw
+7. Install the local PCM plugin, allow the PCM tools, and restart OpenClaw
+8. Test with `pcm_list_vms`, then `pcm_start_vm`, then `pcm_get_job_status`
+
 ## Example OpenClaw Prompts
 
 - `Use pcm_list_vms to list my VMs. Do not use exec.`
 - `Use pcm_stop_vm with vmId "wireguard". Do not use exec.`
 - `Use pcm_get_job_status with a job id returned by the backend.`
+- `Use pcm_update_vm with vmId "ubuntu-web". Do not use exec.`
 
 ## Design Choices
 

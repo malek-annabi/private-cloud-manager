@@ -58,6 +58,7 @@ The OpenClaw plugin exposes the backend as explicit tools:
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
+- `pcm_update_vm`
 
 This keeps the AI layer on the same backend pathways as the human UI instead of giving the model direct host-shell control.
 
@@ -72,6 +73,7 @@ The current operator flow is:
 5. SSH can be opened directly from the dashboard.
 6. If a VM is powered off, the SSH workspace can start it, wait for SSH readiness, and then open a terminal tab automatically.
 7. OpenClaw can call the same operational backend through named tools.
+8. Interactive SSH logins refresh OS version and reboot-needed state so the inventory stays closer to reality.
 
 ## Notable Features
 
@@ -123,6 +125,15 @@ The platform also refreshes OS family, OS version, and reboot-needed state whene
 ### AI Operations Layer
 
 By integrating OpenClaw and Ollama through a custom plugin, the project supports local AI-assisted operations without bypassing the backend. The model does not execute directly on the host; it uses explicit tools that call the same backend APIs as the human interface.
+
+In practice, this requires four pieces to line up:
+
+- Ollama running locally with a usable instruction model
+- OpenClaw configured to use that local Ollama provider
+- the Private Cloud Manager plugin installed and allowed
+- the plugin configured with the backend base URL and token
+
+That setup turns the AI layer into a controlled operator surface instead of a shell with vibes.
 
 ## Why This Project Matters
 

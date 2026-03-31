@@ -57,6 +57,14 @@ The main records are:
 - `JobLog`
 - `AuditEvent`
 
+The `VM` record is the live operational copy of your inventory. It stores:
+
+- static bootstrap data from `inventory.json`
+- live power state derived from VMware
+- SSH connection details that can be edited from the UI
+- activity metadata such as `lastSeenOnlineAt` and `lastSshLoginAt`
+- OS patch metadata such as `osFamily`, `osVersion`, `lastUpdatedAt`, and `rebootRequired`
+
 The real inventory bootstrap file stays local at:
 
 ```text
@@ -90,3 +98,35 @@ http://127.0.0.1:8000
 - if `API_TOKEN` is not set, the fallback token is `dev-token`
 - background jobs are processed by the worker
 - interactive SSH is handled separately through the WebSocket server
+- VMware inventory is bootstrapped from `backend/src/data/inventory.json`
+- the real inventory file should stay private and untracked
+- Ubuntu update jobs depend on working SSH credentials and `sudo` privileges on the guest
+- interactive SSH sessions also refresh OS family/version and reboot-required state
+
+## Setup Checklist
+
+1. Copy `src/data/inventory.example.json` to `src/data/inventory.json`
+2. Fill in:
+   - VM ids and names
+   - valid `.vmx` paths
+   - SSH host/user/port
+   - either `password` or `privateKeyPath`
+   - optional OS hints such as Ubuntu `family` and `version`
+3. Make sure `vmrun.exe` is available where the adapter expects it
+4. Run `npx prisma generate` and `npx prisma db push`
+5. Start the backend and check `GET /api/health`
+
+## Update Flow
+
+Managed Ubuntu updates go through `POST /api/jobs/update-vm`.
+
+The backend:
+
+- validates that the VM is update-eligible
+- connects over SSH through the existing backend control path
+- runs package maintenance as a job
+- stores `lastUpdatedAt`
+- refreshes `osVersion`
+- records whether a reboot is required
+
+Even outside the update job, an interactive SSH login will also refresh OS metadata so the control plane stays reasonably current.

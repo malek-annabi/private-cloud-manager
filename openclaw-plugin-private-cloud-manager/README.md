@@ -34,18 +34,21 @@ Example shape:
 
 ```json
 {
-  "tools": {
+  "plugins": {
     "allow": [
       "private-cloud-manager"
-    ]
-  },
-  "plugins": {
-    "enabled": true,
+    ],
+    "load": {
+      "paths": [
+        "D:\\Projects\\private-cloud-manager\\openclaw-plugin-private-cloud-manager"
+      ]
+    },
     "entries": {
       "private-cloud-manager": {
         "enabled": true,
         "config": {
           "baseUrl": "http://127.0.0.1:8000/api",
+          "token": "dev-token",
           "timeoutMs": 15000
         }
       }
@@ -55,6 +58,36 @@ Example shape:
 ```
 
 After updating OpenClaw config, restart the OpenClaw gateway.
+
+Also allow the individual PCM tools for the agent that should use them:
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "alsoAllow": [
+            "pcm_list_vms",
+            "pcm_start_vm",
+            "pcm_stop_vm",
+            "pcm_ssh_exec",
+            "pcm_get_job_status",
+            "pcm_update_vm"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+If you update the plugin code locally, reinstall it and restart OpenClaw:
+
+```powershell
+openclaw plugins install -l D:\Projects\private-cloud-manager\openclaw-plugin-private-cloud-manager
+```
 
 If you prefer not to keep secrets in OpenClaw config, you can also provide these as environment variables for the Gateway process:
 
@@ -73,6 +106,45 @@ If you do want to keep the token in OpenClaw config, add:
 This plugin does not talk to Ollama directly. OpenClaw handles the model, and the model calls these tools.
 
 Use Ollama as the OpenClaw model provider, then allow the assistant to use the `private-cloud-manager` plugin tools.
+
+Example Ollama provider shape in `openclaw.json`:
+
+```json
+{
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "api": "ollama"
+      }
+    }
+  }
+}
+```
+
+Example local model startup:
+
+```powershell
+ollama serve
+ollama pull qwen2.5:7b-instruct-q4_K_M
+```
+
+Smaller local models can still narrate tool calls imperfectly even when the tool invocation is correct. The safest pattern is to trust the structured tool result first, then tune model choice and OpenClaw workspace guidance as needed.
+
+## Recommended OpenClaw Workspace Notes
+
+These are optional but helpful:
+
+- `USER.md`: operator profile and preferences
+- `IDENTITY.md`: assistant persona
+- `TOOLS.md`: grounding rules such as “do not claim a tool ran unless this turn shows it”
+
+These files improve consistency, but they are not what makes the plugin functional. The plugin works when:
+
+- the backend is reachable
+- the token is configured
+- the PCM tools are allowed
+- OpenClaw has been restarted after changes
 
 ## Notes
 
