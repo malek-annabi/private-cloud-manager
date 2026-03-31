@@ -32,6 +32,7 @@ The backend is responsible for:
 - `GET /api/vms`
 - `GET /api/vms/:id`
 - `GET /api/vms/:id/ssh-ready`
+- `GET /api/vms/:id/update-feed`
 - `PATCH /api/vms/:id/tags`
 - `PATCH /api/vms/:id/connection`
 - `GET /api/jobs`
@@ -102,6 +103,8 @@ http://127.0.0.1:8000
 - the real inventory file should stay private and untracked
 - Ubuntu update jobs depend on working SSH credentials and `sudo` privileges on the guest
 - interactive SSH sessions also refresh OS family/version and reboot-required state
+- `GET /api/vms/:id/update-feed` gives an on-demand Ubuntu package change feed, including security candidates and kernel/core package highlights
+- `FG-VM` is treated as critical lab infrastructure and routine stop actions are guarded unless an explicit override is provided
 
 ## Setup Checklist
 
@@ -130,3 +133,5 @@ The backend:
 - records whether a reboot is required
 
 Even outside the update job, an interactive SSH login will also refresh OS metadata so the control plane stays reasonably current.
+
+Before patching, the frontend or OpenClaw can call `GET /api/vms/:id/update-feed?mode=security` to inspect pending package changes. The feed is generated on demand over SSH, so it stays current without background polling.

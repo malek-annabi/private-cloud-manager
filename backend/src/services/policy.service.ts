@@ -1,3 +1,9 @@
+const CRITICAL_VM_IDS = new Set(["FG-VM"]);
+
+export function isCriticalInfrastructureVm(vm: any) {
+  return CRITICAL_VM_IDS.has(vm.id);
+}
+
 export function canDeleteVM(vm: any) {
   return vm.type === "EPHEMERAL";
 }
@@ -8,6 +14,10 @@ export function canExecuteSSH(vm: any) {
 
 export function canStartVM(vm: any) {
   return true; // extend later
+}
+
+export function canStopVM(vm: any) {
+  return !isCriticalInfrastructureVm(vm);
 }
 
 export function requiresApproval(jobType: string): boolean {

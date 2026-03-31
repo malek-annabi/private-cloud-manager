@@ -23,7 +23,9 @@ The frontend currently provides:
 - start and stop actions with state-aware buttons
 - editable SSH connection details
 - managed Ubuntu server update action with OS version and patch metadata
+- on-demand security change feed with kernel/core package highlights before patching
 - automatic OS metadata refresh after interactive SSH login
+- lab preset controls for Blue Team, Red Team, Purple Team, and WG-VPN
 - jobs view with timestamps and detail logs
 - audit view with action metadata
 - multi-session browser SSH with tabbed terminals
@@ -82,6 +84,9 @@ http://127.0.0.1:5173
    - power-state badges update
    - jobs and audit pages respond
    - SSH opens for running VMs
+   - lab preset buttons queue the expected jobs
+
+The UI also surfaces critical infrastructure nodes so the operator can immediately see when a VM is dependency-bearing for the rest of the lab.
 
 ## Operator Flow
 
@@ -92,4 +97,6 @@ Typical operator flow from the UI:
 3. Edit SSH target details if a guest IP changes
 4. Open one or more SSH tabs
 5. Queue a managed Ubuntu update when needed
-6. Check Jobs and Audit for history and results
+6. Inspect the security change feed before sensitive Ubuntu patching
+7. Check Jobs and Audit for history and results
+8. Fire or stop a named lab preset, optionally including the gateway on stop

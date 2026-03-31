@@ -10,6 +10,9 @@ This plugin lets OpenClaw call the existing private-cloud-manager backend as a s
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
 - `pcm_update_vm`
+- `pcm_get_update_feed`
+- `pcm_fire_lab`
+- `pcm_stop_lab`
 
 These tools call the backend routes that already exist today:
 
@@ -74,7 +77,10 @@ Also allow the individual PCM tools for the agent that should use them:
             "pcm_stop_vm",
             "pcm_ssh_exec",
             "pcm_get_job_status",
-            "pcm_update_vm"
+            "pcm_update_vm",
+            "pcm_get_update_feed",
+            "pcm_fire_lab",
+            "pcm_stop_lab"
           ]
         }
       }
@@ -151,4 +157,7 @@ These files improve consistency, but they are not what makes the plugin function
 - `pcm_ssh_exec` still goes through your backend approval and SSH policy logic.
 - `pcm_start_vm` and `pcm_stop_vm` create normal backend jobs, so the dashboard and OpenClaw stay in sync.
 - `pcm_update_vm` queues a managed Ubuntu server update job through the same backend job and audit flow.
+- `pcm_get_update_feed` retrieves an on-demand Ubuntu package change feed with security, kernel, and other critical-package highlights before patching.
+- `pcm_fire_lab` queues the first lab presets: Blue Team, Red Team, Purple Team, and WG-VPN.
+- `pcm_stop_lab` queues lab shutdowns and can optionally include `FG-VM` through an explicit critical-infrastructure override.
 - If you later add snapshot, release, cancel, audit, or live terminal tools, this plugin is the right place to expose them.

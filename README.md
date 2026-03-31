@@ -20,11 +20,13 @@ It combines:
 - Live VM power state in the dashboard
 - Per-VM `last online` and `last SSH login` activity indicators
 - Ubuntu-aware server update action with OS version, `last updated`, and reboot-required visibility
+- On-demand security change feed with kernel/core package highlights before patching
 - Automatic OS metadata refresh on interactive SSH connect
 - Job-based start and stop orchestration with logs and timestamps
 - Audit view for operator actions and API activity
 - Token-gated web interface
 - Editable SSH connection details from the dashboard
+- Lab preset buttons for Blue Team, Red Team, Purple Team, and WG-VPN
 - Multi-tab browser SSH workspace with same-VM parallel tabs
 - Auto boot-and-connect flow for powered-off VMs
 - OpenClaw integration on top of the same backend used by the UI
@@ -101,6 +103,9 @@ OpenClaw plugin that exposes the backend as tools:
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
 - `pcm_update_vm`
+- `pcm_get_update_feed`
+- `pcm_fire_lab`
+- `pcm_stop_lab`
 
 This lets a local OpenClaw assistant running on top of Ollama interact with the same backend APIs used by the frontend.
 
@@ -204,6 +209,7 @@ Important backend notes:
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
 - Ubuntu VMs can be updated through a managed job instead of ad hoc SSH commands
+- Ubuntu VMs can expose an on-demand security change feed that highlights kernel and other critical package updates before patching
 - interactive SSH logins refresh `lastSshLoginAt`, OS family, OS version, and reboot-required state
 
 ### Frontend
@@ -318,7 +324,10 @@ Add the PCM tools to the OpenClaw agent allowlist:
   "pcm_stop_vm",
   "pcm_ssh_exec",
   "pcm_get_job_status",
-  "pcm_update_vm"
+  "pcm_update_vm",
+  "pcm_get_update_feed",
+  "pcm_fire_lab",
+  "pcm_stop_lab"
 ]
 ```
 
@@ -353,6 +362,9 @@ These files do not make the tools work, but they improve consistency and reduce 
 - `Use pcm_stop_vm with vmId "wireguard". Do not use exec.`
 - `Use pcm_get_job_status with a job id returned by the backend.`
 - `Use pcm_update_vm with vmId "ubuntu-web". Do not use exec.`
+- `Use pcm_get_update_feed with vmId "ubuntu-web" and mode "security". Do not use exec.`
+- `Use pcm_fire_lab with lab "blue_team". Do not use exec.`
+- `Use pcm_stop_lab with lab "wg_vpn" and includeGateway false. Do not use exec.`
 
 ## Design Choices
 
@@ -380,6 +392,7 @@ The goal is to contribute something practical to the community: a concrete examp
 ## Documentation
 
 - [Project writeup](./docs/PROJECT_WRITEUP.md)
+- [Runbooks phase 1](./docs/RUNBOOKS_PHASE1.md)
 - [Frontend notes](./frontend/README.md)
 - [Backend notes](./backend/README.md)
 - [OpenClaw plugin notes](./openclaw-plugin-private-cloud-manager/README.md)

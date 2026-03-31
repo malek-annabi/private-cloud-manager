@@ -5,6 +5,7 @@ import { prisma } from "../../core/prisma";
 import { z } from "zod";
 import {
   canStartVM,
+  canStopVM,
   canDeleteVM,
   canUpdateServer,
 } from "../../services/policy.service";
@@ -16,6 +17,7 @@ const router = Router();
  */
 const startStopSchema = z.object({
   vmId: z.string().min(1),
+  overrideCriticalInfrastructure: z.boolean().optional(),
 });
 
 const snapshotSchema = z.object({
@@ -117,6 +119,13 @@ router.post(
 
       if (!vm) {
         return res.status(404).json({ error: "VM not found" });
+      }
+
+      if (
+        !canStopVM(vm) &&
+        !parsed.data.overrideCriticalInfrastructure
+      ) {
+        return res.status(403).json({ error: "Policy denied" });
       }
 
       const job = await createJob("VM_STOP", parsed.data);

@@ -3,6 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVMs } from "../hooks/useVMs";
 import {
   checkVmSshReady,
+  fetchVmUpdateFeed,
+  type VmUpdateFeedRecord,
   type VmRecord,
   updateVmConnection,
   updateVmTags,
@@ -12,6 +14,52 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import SSHTerminal from "../components/ssh/Terminal";
+
+type LabPreset = {
+  id: "blue-team" | "red-team" | "purple-team" | "wg-vpn";
+  name: string;
+  fireLabel: string;
+  stopLabel: string;
+  description: string;
+  vmIds: string[];
+};
+
+const CRITICAL_GATEWAY_VM_ID = "FG-VM";
+
+const LAB_PRESETS: LabPreset[] = [
+  {
+    id: "blue-team",
+    name: "Blue Team",
+    fireLabel: "Fire Blue Team Lab",
+    stopLabel: "Stop Blue Team Lab",
+    description: "Starts FG-VM if needed, then Wazuh, IRIS, and MISP.",
+    vmIds: ["wazuh", "iris", "misp"],
+  },
+  {
+    id: "red-team",
+    name: "Red Team",
+    fireLabel: "Fire Red Team Lab",
+    stopLabel: "Stop Red Team Lab",
+    description: "Starts FG-VM if needed, then Kali and the victim node.",
+    vmIds: ["kali-01", "ubuntu-server-victim"],
+  },
+  {
+    id: "purple-team",
+    name: "Purple Team",
+    fireLabel: "Fire Purple Team Lab",
+    stopLabel: "Stop Purple Team Lab",
+    description: "Starts FG-VM if needed, then Wazuh, IRIS, Kali, and the victim node.",
+    vmIds: ["wazuh", "iris", "kali-01", "ubuntu-server-victim"],
+  },
+  {
+    id: "wg-vpn",
+    name: "WG-VPN",
+    fireLabel: "Fire WG-VPN",
+    stopLabel: "Stop WG-VPN",
+    description: "Starts FG-VM if needed, then WireGuard.",
+    vmIds: ["wireguard"],
+  },
+];
 
 export default function VMs() {
   const queryClient = useQueryClient();
@@ -34,6 +82,13 @@ export default function VMs() {
   });
   const [savingConnectionFor, setSavingConnectionFor] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState("");
+  const [runningLabActionId, setRunningLabActionId] = useState<string | null>(null);
+  const [stopLabPreset, setStopLabPreset] = useState<LabPreset | null>(null);
+  const [includeGatewayOnStop, setIncludeGatewayOnStop] = useState(false);
+  const [updateFeedVmId, setUpdateFeedVmId] = useState<string | null>(null);
+  const [updateFeed, setUpdateFeed] = useState<VmUpdateFeedRecord | null>(null);
+  const [loadingUpdateFeedFor, setLoadingUpdateFeedFor] = useState<string | null>(null);
+  const [updateFeedError, setUpdateFeedError] = useState("");
 
   const stats = {
     total: data.length,
@@ -113,6 +168,23 @@ export default function VMs() {
         return left.name.localeCompare(right.name);
       });
   }, [data, searchTerm]);
+  const labStatuses = useMemo(
+    () =>
+      LAB_PRESETS.map((preset) => {
+        const members = preset.vmIds
+          .map((vmId) => data.find((vm) => vm.id === vmId))
+          .filter((vm): vm is VmRecord => Boolean(vm));
+        const runningCount = members.filter((vm) => vm.powerState === "ON").length;
+
+        return {
+          preset,
+          runningCount,
+          totalCount: preset.vmIds.length,
+          allRunning: members.length === preset.vmIds.length && runningCount === preset.vmIds.length,
+        };
+      }),
+    [data],
+  );
 
   useEffect(() => {
     setSshSessions((current) =>
@@ -179,10 +251,86 @@ export default function VMs() {
     setUpdatingVmId(vmId);
 
     try {
-      await updateVM(vmId, { mode: "full", autoremove: true });
+      await updateVM(vmId, { mode: "security", autoremove: false });
       await queryClient.invalidateQueries({ queryKey: ["jobs"] });
     } finally {
       setUpdatingVmId(null);
+    }
+  };
+
+  const openUpdateFeed = async (vm: VmRecord) => {
+    setUpdateFeedVmId(vm.id);
+    setUpdateFeed(null);
+    setUpdateFeedError("");
+    setLoadingUpdateFeedFor(vm.id);
+
+    try {
+      const feed = await fetchVmUpdateFeed(vm.id, "security");
+      setUpdateFeed(feed);
+    } catch (error: any) {
+      setUpdateFeedError(
+        error?.response?.data?.error ??
+          error?.message ??
+          "Could not load the security change feed for this VM.",
+      );
+    } finally {
+      setLoadingUpdateFeedFor(null);
+    }
+  };
+
+  const runLabStart = async (preset: LabPreset) => {
+    setRunningLabActionId(`start:${preset.id}`);
+
+    try {
+      const gatewayVm = data.find((vm) => vm.id === CRITICAL_GATEWAY_VM_ID);
+      if (gatewayVm && gatewayVm.powerState !== "ON") {
+        await startVM(CRITICAL_GATEWAY_VM_ID);
+      }
+
+      for (const vmId of preset.vmIds) {
+        const vm = data.find((candidate) => candidate.id === vmId);
+        if (!vm || vm.powerState === "ON") {
+          continue;
+        }
+
+        await startVM(vmId);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    } finally {
+      setRunningLabActionId(null);
+    }
+  };
+
+  const runLabStop = async (preset: LabPreset, includeGateway: boolean) => {
+    setRunningLabActionId(`stop:${preset.id}`);
+
+    try {
+      for (const vmId of [...preset.vmIds].reverse()) {
+        const vm = data.find((candidate) => candidate.id === vmId);
+        if (!vm || vm.powerState !== "ON") {
+          continue;
+        }
+
+        await stopVM(vmId);
+      }
+
+      if (includeGateway) {
+        const gatewayVm = data.find((vm) => vm.id === CRITICAL_GATEWAY_VM_ID);
+        if (gatewayVm?.powerState === "ON") {
+          await stopVM(CRITICAL_GATEWAY_VM_ID, {
+            overrideCriticalInfrastructure: true,
+          });
+        }
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    } finally {
+      setRunningLabActionId(null);
+      setStopLabPreset(null);
+      setIncludeGatewayOnStop(false);
     }
   };
 
@@ -407,6 +555,68 @@ export default function VMs() {
       </div>
 
       <Card className="border-white/10 bg-white/5">
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+              Runbooks
+            </p>
+            <h2 className="text-2xl font-semibold text-white">
+              Fire or stop a lab in one move
+            </h2>
+            <p className="max-w-3xl text-sm text-slate-300">
+              These presets treat <span className="text-white">FG-VM</span> as the backbone gateway:
+              fire actions start it first if needed, and stop actions let you decide whether to power it off with the lab.
+            </p>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            {labStatuses.map(({ preset, runningCount, totalCount, allRunning }) => (
+              <Card key={preset.id} className="border-white/10 bg-slate-950/70 p-5">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">{preset.name}</h3>
+                      <p className="mt-1 text-sm text-slate-400">{preset.description}</p>
+                    </div>
+                    <Badge
+                      label={`${runningCount}/${totalCount} running`}
+                      tone={allRunning ? "success" : "info"}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Badge label="FG-VM dependency" tone="warning" />
+                    {preset.vmIds.map((vmId) => (
+                      <Badge key={vmId} label={vmId} tone="neutral" />
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      disabled={runningLabActionId !== null}
+                      onClick={() => void runLabStart(preset)}
+                    >
+                      {runningLabActionId === `start:${preset.id}` ? "Firing..." : preset.fireLabel}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={runningLabActionId !== null}
+                      onClick={() => {
+                        setStopLabPreset(preset);
+                        setIncludeGatewayOnStop(false);
+                      }}
+                    >
+                      {runningLabActionId === `stop:${preset.id}` ? "Stopping..." : preset.stopLabel}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      <Card className="border-white/10 bg-white/5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="space-y-2">
             <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -607,7 +817,7 @@ export default function VMs() {
           const isStopping = runningActionFor === `stop:${vm.id}`;
           const canOpenSsh = vm.powerState === "ON";
           const canStartVm = vm.powerState !== "ON";
-          const canStopVm = vm.powerState === "ON";
+          const canStopVm = vm.powerState === "ON" && !vm.isCriticalInfrastructure;
           const canUpdateVm = vm.powerState === "ON" && vm.osFamily?.toLowerCase() === "ubuntu";
           const isUpdating = updatingVmId === vm.id;
 
@@ -629,6 +839,9 @@ export default function VMs() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <PowerBadge powerState={vm.powerState} />
+                      {vm.isCriticalInfrastructure ? (
+                        <Badge label="Critical infrastructure" tone="warning" />
+                      ) : null}
                       {vm.rebootRequired ? <Badge label="Reboot required" tone="danger" /> : null}
                       {vm.sshHost ? (
                         <Badge
@@ -748,13 +961,25 @@ export default function VMs() {
                     disabled={!canUpdateVm || isUpdating}
                     onClick={() => runVmUpdate(vm.id)}
                   >
-                    {isUpdating ? "Queueing update..." : "Update server"}
+                    {isUpdating ? "Queueing update..." : "Security update"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={loadingUpdateFeedFor === vm.id || vm.powerState !== "ON"}
+                    onClick={() => void openUpdateFeed(vm)}
+                  >
+                    {loadingUpdateFeedFor === vm.id ? "Loading feed..." : "Security feed"}
                   </Button>
                 </div>
 
                 {!canOpenSsh && isOpeningSessionFor !== vm.id ? (
                   <p className="text-sm text-amber-200/90">
                     SSH can boot this VM and connect automatically when it becomes ready.
+                  </p>
+                ) : null}
+                {vm.isCriticalInfrastructure ? (
+                  <p className="text-sm text-amber-200/90">
+                    This VM is treated as critical lab infrastructure. Routine stop actions are guarded, but lab stop flows can still include it when you explicitly choose to proceed.
                   </p>
                 ) : null}
                 {!canUpdateVm ? (
@@ -1013,6 +1238,206 @@ export default function VMs() {
                       ? "Save and open SSH"
                       : "Save connection"}
                 </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {stopLabPreset && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl border-white/10 bg-slate-950">
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                  Stop lab
+                </p>
+                <h2 className="text-2xl font-semibold text-white">
+                  {stopLabPreset.stopLabel}
+                </h2>
+                <p className="text-sm leading-6 text-slate-400">
+                  {stopLabPreset.name} depends on FG-VM for core lab communication. Choose whether the stop action should also power down the gateway firewall.
+                </p>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-300">
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={includeGatewayOnStop}
+                    onChange={(event) => setIncludeGatewayOnStop(event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
+                  />
+                  <span>
+                    Also shut down <span className="text-white">FG-VM</span> after the lab VMs stop.
+                  </span>
+                </label>
+                <p className="text-xs text-amber-200/90">
+                  If checked, the lab may lose internal communication and internet access until FG-VM is started again.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setStopLabPreset(null);
+                    setIncludeGatewayOnStop(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={runningLabActionId !== null}
+                  onClick={() => void runLabStop(stopLabPreset, includeGatewayOnStop)}
+                >
+                  {runningLabActionId === `stop:${stopLabPreset.id}` ? "Stopping..." : "Proceed"}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {updateFeedVmId && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center bg-slate-950/75 px-4 py-8 backdrop-blur-sm">
+          <Card className="max-h-[90vh] w-full max-w-5xl overflow-hidden border-white/10 bg-slate-950">
+            <div className="flex max-h-[90vh] flex-col">
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-5">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Security change feed
+                  </p>
+                  <h2 className="text-2xl font-semibold text-white">
+                    {updateFeed?.vmName ?? updateFeedVmId}
+                  </h2>
+                  <p className="text-sm text-slate-400">
+                    Review security-targeted package changes before you queue a rotation or patch run.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setUpdateFeedVmId(null);
+                    setUpdateFeed(null);
+                    setUpdateFeedError("");
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5">
+                {loadingUpdateFeedFor === updateFeedVmId ? (
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-sm text-slate-300">
+                    Fetching package changes, kernel hints, and security candidates from the guest over SSH...
+                  </div>
+                ) : updateFeedError ? (
+                  <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5 text-sm text-rose-100">
+                    {updateFeedError}
+                  </div>
+                ) : updateFeed ? (
+                  <div className="space-y-6">
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <StatCard label="Upgradable" value={updateFeed.totalUpgradable} tone="info" compact />
+                      <StatCard label="Security" value={updateFeed.securityCandidateCount} tone="warning" compact />
+                      <StatCard
+                        label="Critical"
+                        value={updateFeed.packages.filter((item) => item.critical && item.securityCandidate).length}
+                        tone={updateFeed.packages.some((item) => item.critical && item.securityCandidate) ? "danger" : "neutral"}
+                        compact
+                      />
+                      <StatCard
+                        label="Reboot flag"
+                        value={updateFeed.rebootRequired ? 1 : 0}
+                        tone={updateFeed.rebootRequired ? "danger" : "success"}
+                        compact
+                      />
+                    </div>
+
+                    <Card className="border-white/10 bg-slate-900/70">
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge label={updateFeed.osVersion ?? "OS unknown"} tone="info" />
+                          <Badge label={`Kernel ${updateFeed.kernelVersion ?? "unknown"}`} tone="neutral" />
+                          <Badge
+                            label={updateFeed.rebootRequired ? "Reboot required" : "No reboot flag"}
+                            tone={updateFeed.rebootRequired ? "danger" : "success"}
+                          />
+                          <Badge label={`Generated ${formatRelativeDate(updateFeed.generatedAt)}`} tone="neutral" />
+                        </div>
+                        <div className="space-y-2">
+                          {updateFeed.highlights.map((highlight) => (
+                            <p
+                              key={highlight}
+                              className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100"
+                            >
+                              {highlight}
+                            </p>
+                          ))}
+                          {updateFeed.highlights.length === 0 ? (
+                            <p className="text-sm text-slate-300">
+                              No urgent highlights detected.
+                            </p>
+                          ) : null}
+                        </div>
+                        {updateFeed.sourceNotes.length > 0 ? (
+                          <div className="space-y-2">
+                            {updateFeed.sourceNotes.map((note) => (
+                              <p key={note} className="text-xs text-slate-400">
+                                {note}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </Card>
+
+                    <Card className="border-white/10 bg-slate-900/70">
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                            Pending packages
+                          </p>
+                          <h3 className="mt-2 text-lg font-semibold text-white">
+                            Security-aware upgrade preview
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3">
+                          {updateFeed.packages.length > 0 ? (
+                            updateFeed.packages.map((item) => (
+                              <div
+                                key={`${item.name}-${item.targetVersion ?? "next"}`}
+                                className="rounded-2xl border border-white/10 bg-slate-950/70 p-4"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-white">{item.name}</div>
+                                    <div className="mt-1 text-xs text-slate-400">
+                                      {item.currentVersion ?? "unknown"} {"->"} {item.targetVersion ?? "unknown"}
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {item.securityCandidate ? <Badge label="Security" tone="warning" /> : null}
+                                    {item.critical ? <Badge label="Critical" tone="danger" /> : null}
+                                    {item.kernelRelated ? <Badge label="Kernel" tone="danger" /> : null}
+                                    {item.repository ? <Badge label={item.repository} tone="neutral" /> : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-sm text-slate-300">
+                              No pending package changes detected.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                ) : null}
               </div>
             </div>
           </Card>

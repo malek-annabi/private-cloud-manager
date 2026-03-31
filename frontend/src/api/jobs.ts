@@ -26,8 +26,10 @@ export const fetchJobs = async (): Promise<JobRecord[]> => {
 export const startVM = (vmId: string) =>
   api.post("/jobs/start-vm", { vmId });
 
-export const stopVM = (vmId: string) =>
-  api.post("/jobs/stop-vm", { vmId });
+export const stopVM = (
+  vmId: string,
+  options?: { overrideCriticalInfrastructure?: boolean },
+) => api.post("/jobs/stop-vm", { vmId, ...options });
 
 export const updateVM = (
   vmId: string,

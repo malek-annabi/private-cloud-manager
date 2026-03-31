@@ -17,8 +17,11 @@ Today the system provides:
 - audit visibility for actions and API activity
 - a browser-based multi-tab SSH workspace
 - a managed Ubuntu server update workflow with OS version and patch metadata
+- an on-demand security change feed that surfaces kernel and critical package changes before patching
 - automatic OS metadata refresh on interactive SSH connect
 - an OpenClaw plugin for local AI-assisted operations through Ollama
+- a planned runbook layer for controlled natural-language lab workflows
+- first lab preset actions for Blue Team, Red Team, Purple Team, and WG-VPN
 
 ## Architecture
 
@@ -122,6 +125,8 @@ That keeps patching on the same audited backend path as the rest of the platform
 
 The platform also refreshes OS family, OS version, and reboot-needed state whenever an interactive SSH session is established. That keeps VM metadata current even if a machine was patched outside the dashboard.
 
+An important safety addition is the on-demand security change feed. Before queuing a patch run, the operator can now inspect pending Ubuntu package changes through the same backend SSH control path and see whether kernel or other core platform packages are involved. That makes a future `rotate_security_updates` workflow much safer than blindly applying every available upgrade.
+
 ### AI Operations Layer
 
 By integrating OpenClaw and Ollama through a custom plugin, the project supports local AI-assisted operations without bypassing the backend. The model does not execute directly on the host; it uses explicit tools that call the same backend APIs as the human interface.
@@ -134,6 +139,17 @@ In practice, this requires four pieces to line up:
 - the plugin configured with the backend base URL and token
 
 That setup turns the AI layer into a controlled operator surface instead of a shell with vibes.
+
+### Lab Presets and Runbook Direction
+
+The project is now moving from single VM actions toward scenario-based lab orchestration. The first concrete step is a set of named lab presets in both the UI and OpenClaw plugin:
+
+- Blue Team
+- Red Team
+- Purple Team
+- WG-VPN
+
+These actions also account for `FG-VM`, the FortiGate VM that acts as the backbone gateway for the lab. Fire actions start it first when needed. Stop actions can include it too, but only through an explicit operator choice rather than a silent default.
 
 ## Why This Project Matters
 
@@ -158,6 +174,8 @@ It also demonstrates a practical AI pattern:
 - keep AI out of direct host execution paths
 - expose safe operational tools instead
 - reuse the same backend surface used by humans
+
+An important next step is moving from single actions to runbook-shaped operations such as preparing the VPN lab, bringing up the blue-team stack, and rotating security updates across eligible Ubuntu VMs. In this project, those runbooks must also respect critical infrastructure constraints like `FG-VM`, the FortiGate VM that acts as the backbone gateway for the lab.
 
 ## Recommended GitHub Strategy
 

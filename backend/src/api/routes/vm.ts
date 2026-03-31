@@ -6,6 +6,8 @@ import { z } from "zod";
 import { getVmPowerState, listRunningVMs } from "../../adapters/vmware.adapter";
 import { logger } from "../../core/logger";
 import net from "net";
+import { isCriticalInfrastructureVm } from "../../services/policy.service";
+import { executeSSH } from "../../adapters/ssh.adapter";
 
 const router = Router();
 type VmWithTags = Awaited<ReturnType<typeof prisma.vM.findMany>>[number] & {
@@ -23,6 +25,34 @@ const updateConnectionSchema = z.object({
   sshPort: z.number().int().min(1).max(65535).nullable().optional(),
   sshUser: z.string().trim().max(100).optional().or(z.literal("")),
 });
+
+const updateFeedQuerySchema = z.object({
+  mode: z.enum(["security", "full"]).optional(),
+});
+
+const CRITICAL_UPDATE_PACKAGES = [
+  "linux-generic",
+  "linux-image-generic",
+  "linux-headers-generic",
+  "linux-modules-extra",
+  "linux-image",
+  "linux-headers",
+  "linux-modules",
+  "openssl",
+  "openssh-server",
+  "openssh-client",
+  "systemd",
+  "systemd-sysv",
+  "libc6",
+  "libc-bin",
+  "sudo",
+  "cloud-init",
+  "initramfs-tools",
+  "grub",
+  "grub2",
+  "netplan.io",
+  "network-manager",
+] as const;
 
 function parseTags(rawTags: string | null | undefined): string[] {
   if (!rawTags) {
@@ -46,6 +76,7 @@ function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
     ...vm,
     tags: parseTags(vm.tags),
     powerState,
+    isCriticalInfrastructure: isCriticalInfrastructureVm(vm),
   };
 }
 
@@ -116,6 +147,185 @@ function checkTcpConnection(host: string, port: number, timeoutMs = 1500) {
   });
 }
 
+function buildUpdateFeedCommand() {
+  return [
+    "set -e",
+    "sudo apt update >/dev/null 2>&1",
+    'printf "__PCM_SECTION__ os_version %s\\n" "$( . /etc/os-release && printf "%s" "$PRETTY_NAME" )"',
+    'printf "__PCM_SECTION__ kernel %s\\n" "$(uname -r)"',
+    'printf "__PCM_SECTION__ reboot_required %s\\n" "$(if [ -f /var/run/reboot-required ]; then printf yes; else printf no; fi)"',
+    'echo "__PCM_SECTION__ upgradable_start"',
+    "apt list --upgradable 2>/dev/null | sed '1d' || true",
+    'echo "__PCM_SECTION__ upgradable_end"',
+    'echo "__PCM_SECTION__ security_start"',
+    'if command -v unattended-upgrade >/dev/null 2>&1; then sudo unattended-upgrade --dry-run --debug 2>/dev/null | sed -n \'s/^Inst /Inst /p\' || true; else echo "__PCM_UNATTENDED_UPGRADE_MISSING__"; fi',
+    'echo "__PCM_SECTION__ security_end"',
+  ].join("; ");
+}
+
+type UpdateFeedPackage = {
+  name: string;
+  targetVersion: string | null;
+  currentVersion: string | null;
+  repository: string | null;
+  securityCandidate: boolean;
+  critical: boolean;
+  kernelRelated: boolean;
+};
+
+function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
+  const lines = stdout.split(/\r?\n/);
+  const sections = {
+    upgradable: [] as string[],
+    security: [] as string[],
+  };
+  let currentSection: "upgradable" | "security" | null = null;
+  let osVersion: string | null = null;
+  let kernelVersion: string | null = null;
+  let rebootRequired = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+
+    if (line.startsWith("__PCM_SECTION__ os_version ")) {
+      osVersion = line.replace("__PCM_SECTION__ os_version ", "").trim() || null;
+      continue;
+    }
+
+    if (line.startsWith("__PCM_SECTION__ kernel ")) {
+      kernelVersion = line.replace("__PCM_SECTION__ kernel ", "").trim() || null;
+      continue;
+    }
+
+    if (line.startsWith("__PCM_SECTION__ reboot_required ")) {
+      rebootRequired = line.replace("__PCM_SECTION__ reboot_required ", "").trim() === "yes";
+      continue;
+    }
+
+    if (line === "__PCM_SECTION__ upgradable_start") {
+      currentSection = "upgradable";
+      continue;
+    }
+
+    if (line === "__PCM_SECTION__ upgradable_end") {
+      currentSection = null;
+      continue;
+    }
+
+    if (line === "__PCM_SECTION__ security_start") {
+      currentSection = "security";
+      continue;
+    }
+
+    if (line === "__PCM_SECTION__ security_end") {
+      currentSection = null;
+      continue;
+    }
+
+    if (currentSection && line) {
+      sections[currentSection].push(line);
+    }
+  }
+
+  const securityPackages = new Map<string, { currentVersion: string | null; targetVersion: string | null }>();
+  for (const line of sections.security) {
+    if (line === "__PCM_UNATTENDED_UPGRADE_MISSING__") {
+      continue;
+    }
+
+    const match = line.match(/^Inst\s+(\S+)(?:\s+\[([^\]]+)\])?\s+\(([^ )]+)/);
+    if (!match) {
+      continue;
+    }
+
+    securityPackages.set(match[1], {
+      currentVersion: match[2] ?? null,
+      targetVersion: match[3] ?? null,
+    });
+  }
+
+  const packages = sections.upgradable
+    .map((line) => {
+      const match = line.match(/^([^/]+)\/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from: ([^\]]+)\]/);
+      if (!match) {
+        return null;
+      }
+
+      const name = match[1];
+      const repository = match[2];
+      const targetVersion = match[3];
+      const currentVersion = match[4];
+      const securityCandidate = securityPackages.has(name);
+      const loweredName = name.toLowerCase();
+      const kernelRelated = loweredName.startsWith("linux-");
+      const critical =
+        kernelRelated ||
+        CRITICAL_UPDATE_PACKAGES.some((packageName) => loweredName === packageName || loweredName.startsWith(`${packageName}-`));
+
+      return {
+        name,
+        repository,
+        targetVersion,
+        currentVersion,
+        securityCandidate,
+        critical,
+        kernelRelated,
+      } satisfies UpdateFeedPackage;
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+  const relevantPackages =
+    mode === "security" ? packages.filter((item) => item.securityCandidate) : packages;
+  const criticalPackages = relevantPackages.filter((item) => item.critical);
+  const kernelPackages = relevantPackages.filter((item) => item.kernelRelated);
+  const highlights: string[] = [];
+
+  if (relevantPackages.length === 0) {
+    highlights.push(
+      mode === "security"
+        ? "No security-targeted package changes are currently queued by unattended-upgrade."
+        : "No pending package upgrades were detected after apt refresh.",
+    );
+  }
+
+  if (kernelPackages.length > 0) {
+    highlights.push(
+      `Kernel-related changes detected: ${kernelPackages.map((item) => item.name).join(", ")}.`,
+    );
+  }
+
+  const corePackages = criticalPackages.filter((item) => !item.kernelRelated);
+  if (corePackages.length > 0) {
+    highlights.push(
+      `Core platform packages pending: ${corePackages.map((item) => item.name).join(", ")}.`,
+    );
+  }
+
+  if (rebootRequired) {
+    highlights.push("The VM already reports that a reboot is required.");
+  }
+
+  const sourceNotes: string[] = [];
+  if (sections.security.includes("__PCM_UNATTENDED_UPGRADE_MISSING__")) {
+    sourceNotes.push(
+      "unattended-upgrade is not installed, so the security-targeted preview is inferred from the normal package view.",
+    );
+  }
+
+  return {
+    mode,
+    generatedAt: new Date().toISOString(),
+    osVersion,
+    kernelVersion,
+    rebootRequired,
+    totalUpgradable: packages.length,
+    securityCandidateCount: packages.filter((item) => item.securityCandidate).length,
+    highlights,
+    sourceNotes,
+    packages,
+  };
+}
+
 /**
  * GET /api/vms
  */
@@ -177,6 +387,65 @@ router.get("/:id/ssh-ready", auditMiddleware("CHECK_VM_SSH_READY"), async (req, 
 
   const ready = await checkTcpConnection(vm.sshHost, vm.sshPort || 22);
   return res.json({ ready });
+});
+
+router.get("/:id/update-feed", auditMiddleware("GET_VM_UPDATE_FEED"), async (req, res) => {
+  const parsedId = vmIdSchema.safeParse(req.params);
+  if (!parsedId.success) {
+    return res.status(400).json({ error: "Invalid VM ID" });
+  }
+
+  const parsedQuery = updateFeedQuerySchema.safeParse(req.query);
+  if (!parsedQuery.success) {
+    return res.status(400).json({ error: "Invalid update feed query" });
+  }
+
+  const vm = await prisma.vM.findUnique({
+    where: { id: parsedId.data.id },
+  });
+
+  if (!vm) {
+    return res.status(404).json({ error: "VM not found" });
+  }
+
+  if (!vm.sshHost || !vm.sshUser) {
+    return res.status(400).json({ error: "VM SSH not configured" });
+  }
+
+  const powerState = await getVmPowerState(vm.vmxPath);
+  if (powerState !== "ON") {
+    return res.status(409).json({ error: "VM must be running to inspect update feed" });
+  }
+
+  if (vm.osFamily && vm.osFamily.toLowerCase() !== "ubuntu") {
+    return res.status(400).json({ error: "Update feed is currently supported only for Ubuntu VMs" });
+  }
+
+  const mode = parsedQuery.data.mode ?? "security";
+
+  try {
+    const result = await executeSSH({
+      host: vm.sshHost,
+      port: vm.sshPort || 22,
+      username: vm.sshUser,
+      privateKeyPath: vm.sshKeyPath ?? undefined,
+      password: vm.sshPassword ?? undefined,
+      command: buildUpdateFeedCommand(),
+      timeoutMs: 90_000,
+    });
+
+    const feed = parseUpdateFeedOutput(result.stdout, mode);
+
+    return res.json({
+      vmId: vm.id,
+      vmName: vm.name,
+      ...feed,
+      stderr: result.stderr || null,
+    });
+  } catch (error: any) {
+    logger.error({ err: error, vmId: vm.id }, "Failed to generate VM update feed");
+    return res.status(500).json({ error: error?.message ?? "Failed to generate VM update feed" });
+  }
 });
 
 router.patch("/:id/tags", auditMiddleware("UPDATE_VM_TAGS"), async (req, res) => {

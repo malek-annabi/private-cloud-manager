@@ -1,6 +1,14 @@
 const PLUGIN_ID = "private-cloud-manager";
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000/api";
 const DEFAULT_TIMEOUT_MS = 15000;
+const CRITICAL_GATEWAY_VM_ID = "FG-VM";
+
+const LAB_PRESETS = {
+  blue_team: ["wazuh", "iris", "misp"],
+  red_team: ["kali-01", "ubuntu-server-victim"],
+  purple_team: ["wazuh", "iris", "kali-01", "ubuntu-server-victim"],
+  wg_vpn: ["wireguard"],
+} as const;
 
 function getPluginConfig(ctx: any) {
   const pluginConfig =
@@ -206,13 +214,173 @@ async function executeUpdateVm(
     method: "POST",
     body: JSON.stringify({
       vmId: params.vmId,
-      mode: params.mode ?? "full",
+      mode: params.mode ?? "security",
       autoremove: params.autoremove ?? true,
     }),
   });
 
   return textResult(
     `Update server job queued.\nThis call only queued a managed VM update action.\n${formatJobSummary(job)}`
+  );
+}
+
+async function executeGetUpdateFeed(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const mode = params.mode ?? "security";
+  const payload = await apiRequest(
+    ctx,
+    `/vms/${encodeURIComponent(params.vmId)}/update-feed?mode=${encodeURIComponent(mode)}`
+  );
+
+  const highlights = Array.isArray(payload?.highlights) ? payload.highlights : [];
+  const packages = Array.isArray(payload?.packages) ? payload.packages : [];
+  const topPackages = packages.slice(0, 8).map((pkg: any) => {
+    const tags = [
+      pkg.securityCandidate ? "security" : null,
+      pkg.critical ? "critical" : null,
+      pkg.kernelRelated ? "kernel" : null,
+    ].filter(Boolean);
+
+    return `- ${pkg.name}: ${pkg.currentVersion ?? "unknown"} -> ${pkg.targetVersion ?? "unknown"}${tags.length ? ` [${tags.join(", ")}]` : ""}`;
+  });
+
+  return textResult(
+    [
+      `Update feed for ${payload.vmName ?? params.vmId}`,
+      `mode=${payload.mode ?? mode}`,
+      payload.osVersion ? `os=${payload.osVersion}` : null,
+      payload.kernelVersion ? `kernel=${payload.kernelVersion}` : null,
+      `totalUpgradable=${payload.totalUpgradable ?? 0}`,
+      `securityCandidates=${payload.securityCandidateCount ?? 0}`,
+      `rebootRequired=${payload.rebootRequired ? "yes" : "no"}`,
+      highlights.length ? `highlights:\n${highlights.map((line: string) => `- ${line}`).join("\n")}` : "highlights:\n- none",
+      topPackages.length ? `packages:\n${topPackages.join("\n")}` : "packages:\n- none",
+      packages.length > topPackages.length ? `morePackages=${packages.length - topPackages.length}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+async function fetchVmsForRunbook(ctx: any) {
+  const vms = await apiRequest(ctx, "/vms");
+  return Array.isArray(vms) ? vms : [];
+}
+
+async function queueStartVm(ctx: any, vmId: string) {
+  return apiRequest(ctx, "/jobs/start-vm", {
+    method: "POST",
+    body: JSON.stringify({ vmId }),
+  });
+}
+
+async function queueStopVm(ctx: any, vmId: string, overrideCriticalInfrastructure = false) {
+  return apiRequest(ctx, "/jobs/stop-vm", {
+    method: "POST",
+    body: JSON.stringify({ vmId, overrideCriticalInfrastructure }),
+  });
+}
+
+async function executeFireLab(
+  _toolCallId: string,
+  params: any,
+  ctx: any,
+) {
+  const presetVmIds = LAB_PRESETS[params.lab as keyof typeof LAB_PRESETS];
+  if (!presetVmIds) {
+    throw new Error(`Unknown lab preset: ${params.lab}`);
+  }
+
+  const vms = await fetchVmsForRunbook(ctx);
+  const queued: string[] = [];
+  const skipped: string[] = [];
+
+  const gatewayVm = vms.find((vm: any) => vm.id === CRITICAL_GATEWAY_VM_ID);
+  if (gatewayVm && gatewayVm.powerState !== "ON") {
+    await queueStartVm(ctx, CRITICAL_GATEWAY_VM_ID);
+    queued.push(CRITICAL_GATEWAY_VM_ID);
+  } else if (gatewayVm) {
+    skipped.push(`${CRITICAL_GATEWAY_VM_ID} (already running)`);
+  }
+
+  for (const vmId of presetVmIds) {
+    const vm = vms.find((candidate: any) => candidate.id === vmId);
+    if (!vm) {
+      skipped.push(`${vmId} (not found)`);
+      continue;
+    }
+
+    if (vm.powerState === "ON") {
+      skipped.push(`${vmId} (already running)`);
+      continue;
+    }
+
+    await queueStartVm(ctx, vmId);
+    queued.push(vmId);
+  }
+
+  return textResult(
+    [
+      `Fire lab action queued for ${params.lab}.`,
+      queued.length ? `queued=${queued.join(", ")}` : "queued=none",
+      skipped.length ? `skipped=${skipped.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+async function executeStopLab(
+  _toolCallId: string,
+  params: any,
+  ctx: any,
+) {
+  const presetVmIds = LAB_PRESETS[params.lab as keyof typeof LAB_PRESETS];
+  if (!presetVmIds) {
+    throw new Error(`Unknown lab preset: ${params.lab}`);
+  }
+
+  const vms = await fetchVmsForRunbook(ctx);
+  const queued: string[] = [];
+  const skipped: string[] = [];
+
+  for (const vmId of [...presetVmIds].reverse()) {
+    const vm = vms.find((candidate: any) => candidate.id === vmId);
+    if (!vm) {
+      skipped.push(`${vmId} (not found)`);
+      continue;
+    }
+
+    if (vm.powerState !== "ON") {
+      skipped.push(`${vmId} (already stopped)`);
+      continue;
+    }
+
+    await queueStopVm(ctx, vmId, false);
+    queued.push(vmId);
+  }
+
+  if (params.includeGateway) {
+    const gatewayVm = vms.find((vm: any) => vm.id === CRITICAL_GATEWAY_VM_ID);
+    if (gatewayVm?.powerState === "ON") {
+      await queueStopVm(ctx, CRITICAL_GATEWAY_VM_ID, true);
+      queued.push(`${CRITICAL_GATEWAY_VM_ID} (override)`);
+    } else {
+      skipped.push(`${CRITICAL_GATEWAY_VM_ID} (already stopped)`);
+    }
+  }
+
+  return textResult(
+    [
+      `Stop lab action queued for ${params.lab}.`,
+      queued.length ? `queued=${queued.join(", ")}` : "queued=none",
+      skipped.length ? `skipped=${skipped.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
 }
 
@@ -343,7 +511,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm",
         label: "PCM Update VM",
         description:
-          "Queue a managed Ubuntu server update job for a VM by id.",
+          "Queue a managed Ubuntu server update job for a VM by id. Defaults to security mode.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -366,6 +534,89 @@ const privateCloudManagerPlugin = {
         },
         execute(toolCallId: string, params: any) {
           return executeUpdateVm(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_get_update_feed",
+        label: "PCM Get Update Feed",
+        description:
+          "Fetch an on-demand Ubuntu package change feed for a VM, highlighting security candidates, kernel changes, and other critical packages.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "The VM id to inspect, for example ubuntu-web.",
+            },
+            mode: {
+              type: "string",
+              enum: ["security", "full"],
+              description: "Whether to focus the feed on security-targeted updates or all pending package changes.",
+            },
+          },
+          required: ["vmId"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeGetUpdateFeed(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_fire_lab",
+        label: "PCM Fire Lab",
+        description:
+          "Queue start actions for a named lab preset. Starts FG-VM first if the gateway is down.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            lab: {
+              type: "string",
+              enum: ["blue_team", "red_team", "purple_team", "wg_vpn"],
+              description: "The lab preset to start.",
+            },
+          },
+          required: ["lab"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeFireLab(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_stop_lab",
+        label: "PCM Stop Lab",
+        description:
+          "Queue stop actions for a named lab preset. Can optionally also stop FG-VM with an explicit critical-infrastructure override.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            lab: {
+              type: "string",
+              enum: ["blue_team", "red_team", "purple_team", "wg_vpn"],
+              description: "The lab preset to stop.",
+            },
+            includeGateway: {
+              type: "boolean",
+              description: "If true, also stop FG-VM after the lab VMs stop.",
+            },
+          },
+          required: ["lab"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeStopLab(toolCallId, params, ctx);
         },
       }),
       { optional: true }
