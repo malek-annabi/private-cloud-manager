@@ -84,7 +84,8 @@ function formatVmList(vms: any[], includeSshDetails: boolean) {
   return [
     `Found ${vms.length} VM(s):`,
     ...vms.map((vm) => {
-      const base = `- ${vm.id}: ${vm.name} [${vm.type}]`;
+      const state = vm.powerState ? ` state=${vm.powerState}` : "";
+      const base = `- ${vm.id}: ${vm.name} [${vm.type}]${state}`;
 
       if (!includeSshDetails) {
         return base;
@@ -149,7 +150,9 @@ async function executeStartVm(
     body: JSON.stringify({ vmId: params.vmId }),
   });
 
-  return textResult(`Start VM job queued.\n${formatJobSummary(job)}`);
+  return textResult(
+    `Start VM job queued.\nThis call only queued a VM start action.\n${formatJobSummary(job)}`
+  );
 }
 
 async function executeStopVm(
@@ -162,7 +165,9 @@ async function executeStopVm(
     body: JSON.stringify({ vmId: params.vmId }),
   });
 
-  return textResult(`Stop VM job queued.\n${formatJobSummary(job)}`);
+  return textResult(
+    `Stop VM job queued.\nThis call only queued a VM stop action.\n${formatJobSummary(job)}`
+  );
 }
 
 async function executeSshExec(
@@ -178,7 +183,9 @@ async function executeSshExec(
     }),
   });
 
-  return textResult(`SSH execution job queued.\n${formatJobSummary(job)}`);
+  return textResult(
+    `SSH execution job queued.\nThis call only queued an SSH command job.\n${formatJobSummary(job)}`
+  );
 }
 
 async function executeGetJobStatus(
@@ -204,7 +211,9 @@ async function executeUpdateVm(
     }),
   });
 
-  return textResult(`Update server job queued.\n${formatJobSummary(job)}`);
+  return textResult(
+    `Update server job queued.\nThis call only queued a managed VM update action.\n${formatJobSummary(job)}`
+  );
 }
 
 const privateCloudManagerPlugin = {
