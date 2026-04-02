@@ -3,10 +3,11 @@ import { useJobDetail } from "../hooks/useJobs";
 import { JobStatusBadge } from "../components/jobs/JobStatusBadge";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 
 export default function JobDetail() {
   const { id } = useParams();
-  const { data, isLoading } = useJobDetail(id!);
+  const { data, isLoading, refetch, isFetching } = useJobDetail(id!);
 
   if (isLoading) return <div>Loading...</div>;
   if (!data) return <div>Job detail unavailable.</div>;
@@ -45,7 +46,12 @@ export default function JobDetail() {
               Execution timeline
             </h2>
           </div>
-          <Badge label={`${logs.length} log entries`} tone="neutral" />
+          <div className="flex items-center gap-3">
+            <Badge label={`${logs.length} log entries`} tone="neutral" />
+            <Button variant="secondary" onClick={() => void refetch()} disabled={isFetching}>
+              {isFetching ? "Refreshing..." : "Refresh logs"}
+            </Button>
+          </div>
         </div>
 
         <div className="h-[460px] overflow-y-auto rounded-2xl border border-white/10 bg-black/80 p-4 text-sm font-mono">

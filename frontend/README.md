@@ -20,6 +20,7 @@ The frontend currently provides:
 - live VM inventory with power-state visibility
 - per-VM `last online` and `last SSH login` activity indicators
 - compact fleet stats and recent SSH/update cadence widgets
+- job volume and frontend/backend traffic charts
 - start and stop actions with state-aware buttons
 - editable SSH connection details
 - managed Ubuntu server update action with OS version and patch metadata
@@ -29,6 +30,8 @@ The frontend currently provides:
 - jobs view with timestamps and detail logs
 - audit view with action metadata
 - multi-session browser SSH with tabbed terminals
+- cyber news feed with modal story details
+- retractable sidebar for denser operator layout
 
 ## Main Areas
 

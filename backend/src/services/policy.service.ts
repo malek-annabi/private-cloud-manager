@@ -20,6 +20,10 @@ export function canStopVM(vm: any) {
   return !isCriticalInfrastructureVm(vm);
 }
 
+export function canRebootVM(vm: any) {
+  return vm.type !== "TEMPLATE";
+}
+
 export function requiresApproval(jobType: string): boolean {
   return [
     "VM_DELETE",

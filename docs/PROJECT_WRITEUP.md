@@ -18,6 +18,7 @@ Today the system provides:
 - a browser-based multi-tab SSH workspace
 - a managed Ubuntu server update workflow with OS version and patch metadata
 - an on-demand security change feed that surfaces kernel and critical package changes before patching
+- live frontend-to-backend API traffic telemetry in the dashboard
 - automatic OS metadata refresh on interactive SSH connect
 - an OpenClaw plugin for local AI-assisted operations through Ollama
 - a planned runbook layer for controlled natural-language lab workflows
@@ -38,6 +39,7 @@ It is responsible for:
 - jobs and audit views
 - editable SSH connection details
 - multi-session browser SSH with tabbed terminals
+- telemetry sections for jobs, traffic, cadence, and cyber news
 
 ### Backend
 
@@ -51,6 +53,7 @@ It is responsible for:
 - running background workers for job processing
 - exposing WebSocket-based interactive SSH sessions
 - recording audit events and VM activity timestamps
+- exposing lightweight traffic metrics for frontend/backend API activity
 
 ### OpenClaw Plugin
 
@@ -102,6 +105,8 @@ Lifecycle operations are represented as jobs with:
 
 This gives the platform clearer observability and a stronger path toward approvals, retries, and automation.
 
+The dashboard now also visualizes job activity with a multi-series chart so starts, stops, updates, and other operations can be read as an execution pattern instead of a raw list.
+
 ### Audit Trail
 
 The backend records audit events and the frontend exposes them through a dedicated audit page. That gives the platform traceability across VM actions, job execution, and API operations.
@@ -125,6 +130,8 @@ That keeps patching on the same audited backend path as the rest of the platform
 
 The platform also refreshes OS family, OS version, and reboot-needed state whenever an interactive SSH session is established. That keeps VM metadata current even if a machine was patched outside the dashboard.
 
+The reboot-required flag is clickable in the UI and opens a reboot action flow instead of permanently consuming card space with another visible button. That keeps the VM cards cleaner while still exposing both soft and hard reboot paths when needed.
+
 An important safety addition is the on-demand security change feed. Before queuing a patch run, the operator can now inspect pending Ubuntu package changes through the same backend SSH control path and see whether kernel or other core platform packages are involved. That makes a future `rotate_security_updates` workflow much safer than blindly applying every available upgrade.
 
 ### AI Operations Layer
@@ -139,6 +146,16 @@ In practice, this requires four pieces to line up:
 - the plugin configured with the backend base URL and token
 
 That setup turns the AI layer into a controlled operator surface instead of a shell with vibes.
+
+### Telemetry and Operator Awareness
+
+The dashboard is now moving beyond pure lifecycle control into richer operator context. It includes:
+
+- fleet cadence heatmaps for SSH and update activity
+- frontend-to-backend API traffic telemetry
+- a cyber news feed aggregated from security-focused RSS sources
+
+The news feed opens in a modal first so the operator can inspect the summary before choosing whether to jump to the original source.
 
 ### Lab Presets and Runbook Direction
 
@@ -200,6 +217,7 @@ Likely next steps include:
 - approval flows for sensitive actions
 - more OpenClaw tools and natural-language workflows
 - multi-host support
+- a real-time world map for attack telemetry focused on lab VMs and especially honeypot traffic
 
 ## Summary
 

@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   canStartVM,
   canStopVM,
+  canRebootVM,
   canDeleteVM,
   canUpdateServer,
 } from "../../services/policy.service";
@@ -23,6 +24,11 @@ const startStopSchema = z.object({
 const snapshotSchema = z.object({
   vmId: z.string().min(1),
   snapshotName: z.string().min(1),
+});
+
+const rebootVmSchema = z.object({
+  vmId: z.string().min(1),
+  rebootMode: z.enum(["soft", "hard"]).optional(),
 });
 
 const updateVmSchema = z.object({
@@ -192,6 +198,41 @@ router.post(
       }
 
       const job = await createJob("VM_OS_UPDATE", parsed.data);
+      res.json(job);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.post(
+  "/reboot-vm",
+  auditMiddleware("REBOOT_VM"),
+  async (req, res) => {
+    try {
+      const parsed = rebootVmSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid payload" });
+      }
+
+      const vm = await prisma.vM.findUnique({
+        where: { id: parsed.data.vmId },
+      });
+
+      if (!vm) {
+        return res.status(404).json({ error: "VM not found" });
+      }
+
+      if (!canRebootVM(vm)) {
+        return res.status(403).json({ error: "Policy denied" });
+      }
+
+      const job = await createJob("VM_REBOOT", {
+        vmId: parsed.data.vmId,
+        rebootMode: parsed.data.rebootMode ?? "soft",
+      });
+
       res.json(job);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

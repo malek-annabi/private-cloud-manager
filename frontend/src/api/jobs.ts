@@ -31,6 +31,11 @@ export const stopVM = (
   options?: { overrideCriticalInfrastructure?: boolean },
 ) => api.post("/jobs/stop-vm", { vmId, ...options });
 
+export const rebootVM = (
+  vmId: string,
+  options?: { rebootMode?: "soft" | "hard" },
+) => api.post("/jobs/reboot-vm", { vmId, ...options });
+
 export const updateVM = (
   vmId: string,
   options?: { mode?: "security" | "full"; autoremove?: boolean },

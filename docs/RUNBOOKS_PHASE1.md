@@ -151,12 +151,12 @@ Phase 1 plugin/tooling:
 
 - `pcm_get_update_feed` for the change preview
 - `pcm_update_vm` with `mode: "security"` for the actual patch action
-- a future `pcm_rotate_security_updates` orchestration tool if this becomes a single-step runbook
+- `pcm_rotate_security_updates` for the orchestration pass that queues only safer security-only patch jobs
 
 UI needs:
 
 - a `Security feed` action per VM
-- a future `Rotate Security Updates` button
+- a `Rotate Security Updates` button
 - summary output that highlights reboot-required machines and kernel/core package changes
 
 ## Recommended Backend Changes
@@ -224,7 +224,7 @@ Suggested tools:
 - `pcm_fire_lab`
 - `pcm_stop_lab`
 - `pcm_get_update_feed`
-- future: `pcm_rotate_security_updates`
+- `pcm_rotate_security_updates`
 
 Plugin behavior should:
 

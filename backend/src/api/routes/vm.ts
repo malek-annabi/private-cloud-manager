@@ -149,18 +149,37 @@ function checkTcpConnection(host: string, port: number, timeoutMs = 1500) {
 
 function buildUpdateFeedCommand() {
   return [
-    "set -e",
-    "sudo apt update >/dev/null 2>&1",
     'printf "__PCM_SECTION__ os_version %s\\n" "$( . /etc/os-release && printf "%s" "$PRETTY_NAME" )"',
     'printf "__PCM_SECTION__ kernel %s\\n" "$(uname -r)"',
     'printf "__PCM_SECTION__ reboot_required %s\\n" "$(if [ -f /var/run/reboot-required ]; then printf yes; else printf no; fi)"',
+    'printf "__PCM_SECTION__ apt_update %s\\n" "$(if sudo -n apt update >/dev/null 2>&1; then printf ok; else printf failed; fi)"',
     'echo "__PCM_SECTION__ upgradable_start"',
     "apt list --upgradable 2>/dev/null | sed '1d' || true",
     'echo "__PCM_SECTION__ upgradable_end"',
     'echo "__PCM_SECTION__ security_start"',
-    'if command -v unattended-upgrade >/dev/null 2>&1; then sudo unattended-upgrade --dry-run --debug 2>/dev/null | sed -n \'s/^Inst /Inst /p\' || true; else echo "__PCM_UNATTENDED_UPGRADE_MISSING__"; fi',
+    'if command -v unattended-upgrade >/dev/null 2>&1; then if sudo -n unattended-upgrade --dry-run --debug 2>/dev/null | sed -n \'s/^Inst /Inst /p\'; then true; else echo "__PCM_SECURITY_DRY_RUN_FAILED__"; fi; else echo "__PCM_UNATTENDED_UPGRADE_MISSING__"; fi',
     'echo "__PCM_SECTION__ security_end"',
   ].join("; ");
+}
+
+function buildMetadataRefreshCommand() {
+  return [
+    "if [ -f /etc/os-release ]; then . /etc/os-release; printf '__PCM_META__ os_family %s\\n' \"$ID\"; printf '__PCM_META__ os_version %s\\n' \"$PRETTY_NAME\"; fi",
+    "printf '__PCM_META__ reboot_required %s\\n' \"$(if [ -f /var/run/reboot-required ]; then printf yes; else printf no; fi)\"",
+  ].join("; ");
+}
+
+function parseMetadataRefreshOutput(stdout: string) {
+  const osFamily = stdout.match(/__PCM_META__ os_family ([^\r\n]+)/)?.[1]?.trim() || null;
+  const osVersion = stdout.match(/__PCM_META__ os_version ([^\r\n]+)/)?.[1]?.trim() || null;
+  const rebootRequired =
+    stdout.match(/__PCM_META__ reboot_required ([^\r\n]+)/)?.[1]?.trim() === "yes";
+
+  return {
+    osFamily,
+    osVersion,
+    rebootRequired,
+  };
 }
 
 type UpdateFeedPackage = {
@@ -183,6 +202,7 @@ function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
   let osVersion: string | null = null;
   let kernelVersion: string | null = null;
   let rebootRequired = false;
+  let aptUpdateStatus: "ok" | "failed" | null = null;
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
@@ -199,6 +219,12 @@ function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
 
     if (line.startsWith("__PCM_SECTION__ reboot_required ")) {
       rebootRequired = line.replace("__PCM_SECTION__ reboot_required ", "").trim() === "yes";
+      continue;
+    }
+
+    if (line.startsWith("__PCM_SECTION__ apt_update ")) {
+      const value = line.replace("__PCM_SECTION__ apt_update ", "").trim();
+      aptUpdateStatus = value === "ok" || value === "failed" ? value : null;
       continue;
     }
 
@@ -274,8 +300,44 @@ function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
     })
     .filter((value): value is NonNullable<typeof value> => Boolean(value));
 
+  const sourceNotes: string[] = [];
+  if (aptUpdateStatus === "failed") {
+    sourceNotes.push(
+      "apt update could not be refreshed with sudo -n, so package data may reflect cached indexes or restricted sudo privileges.",
+    );
+  }
+  if (sections.security.includes("__PCM_UNATTENDED_UPGRADE_MISSING__")) {
+    sourceNotes.push(
+      "unattended-upgrade is not installed, so the security-targeted preview is inferred from the normal package view.",
+    );
+  }
+  if (sections.security.includes("__PCM_SECURITY_DRY_RUN_FAILED__")) {
+    sourceNotes.push(
+      "The unattended-upgrade dry run could not be executed with sudo -n, so security-only classification may be incomplete.",
+    );
+  }
+
+  const hasDirectSecurityClassification =
+    securityPackages.size > 0 &&
+    !sections.security.includes("__PCM_SECURITY_DRY_RUN_FAILED__");
+
+  const normalizedPackages = packages.map((item) => {
+    const inferredSecurityCandidate =
+      item.securityCandidate ||
+      (!hasDirectSecurityClassification &&
+        typeof item.repository === "string" &&
+        item.repository.toLowerCase().includes("security"));
+
+    return {
+      ...item,
+      securityCandidate: inferredSecurityCandidate,
+    };
+  });
+
   const relevantPackages =
-    mode === "security" ? packages.filter((item) => item.securityCandidate) : packages;
+    mode === "security"
+      ? normalizedPackages.filter((item) => item.securityCandidate)
+      : normalizedPackages;
   const criticalPackages = relevantPackages.filter((item) => item.critical);
   const kernelPackages = relevantPackages.filter((item) => item.kernelRelated);
   const highlights: string[] = [];
@@ -305,24 +367,18 @@ function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
     highlights.push("The VM already reports that a reboot is required.");
   }
 
-  const sourceNotes: string[] = [];
-  if (sections.security.includes("__PCM_UNATTENDED_UPGRADE_MISSING__")) {
-    sourceNotes.push(
-      "unattended-upgrade is not installed, so the security-targeted preview is inferred from the normal package view.",
-    );
-  }
-
   return {
     mode,
     generatedAt: new Date().toISOString(),
     osVersion,
     kernelVersion,
     rebootRequired,
-    totalUpgradable: packages.length,
-    securityCandidateCount: packages.filter((item) => item.securityCandidate).length,
+    aptUpdateStatus,
+    totalUpgradable: normalizedPackages.length,
+    securityCandidateCount: normalizedPackages.filter((item) => item.securityCandidate).length,
     highlights,
     sourceNotes,
-    packages,
+    packages: normalizedPackages,
   };
 }
 
@@ -445,6 +501,69 @@ router.get("/:id/update-feed", auditMiddleware("GET_VM_UPDATE_FEED"), async (req
   } catch (error: any) {
     logger.error({ err: error, vmId: vm.id }, "Failed to generate VM update feed");
     return res.status(500).json({ error: error?.message ?? "Failed to generate VM update feed" });
+  }
+});
+
+router.post("/:id/refresh-state", auditMiddleware("REFRESH_VM_STATE"), async (req, res) => {
+  const parsed = vmIdSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid VM ID" });
+  }
+
+  const vm = await prisma.vM.findUnique({
+    where: { id: parsed.data.id },
+  });
+
+  if (!vm) {
+    return res.status(404).json({ error: "VM not found" });
+  }
+
+  const powerState = await getVmPowerState(vm.vmxPath);
+  if (powerState !== "ON") {
+    return res.status(409).json({ error: "VM must be running to refresh live state" });
+  }
+
+  if (!vm.sshHost || !vm.sshUser) {
+    return res.status(400).json({ error: "VM SSH not configured" });
+  }
+
+  try {
+    const result = await executeSSH({
+      host: vm.sshHost,
+      port: vm.sshPort || 22,
+      username: vm.sshUser,
+      privateKeyPath: vm.sshKeyPath ?? undefined,
+      password: vm.sshPassword ?? undefined,
+      command: buildMetadataRefreshCommand(),
+      timeoutMs: 20_000,
+    });
+
+    const metadata = parseMetadataRefreshOutput(result.stdout);
+    const now = new Date();
+    const updatedVm = (await prisma.vM.update({
+      where: { id: vm.id },
+      data: {
+        lastSeenOnlineAt: now,
+        osFamily: metadata.osFamily ?? undefined,
+        osVersion: metadata.osVersion ?? undefined,
+        rebootRequired: metadata.rebootRequired,
+      } as never,
+    })) as VmWithTags;
+
+    return res.json({
+      vm: serializeVm(
+        {
+          ...updatedVm,
+          lastSeenOnlineAt: now,
+        },
+        "ON",
+      ),
+      refreshedAt: now.toISOString(),
+    });
+  } catch (error: any) {
+    logger.error({ err: error, vmId: vm.id }, "Failed to refresh VM live state");
+    return res.status(500).json({ error: error?.message ?? "Failed to refresh VM live state" });
   }
 });
 

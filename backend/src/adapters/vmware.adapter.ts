@@ -15,6 +15,10 @@ export async function vmStop(vmxPath: string) {
   return execFileAsync(VMRUN_PATH, ["stop", vmxPath, "soft"]);
 }
 
+export async function vmReboot(vmxPath: string, mode: "soft" | "hard" = "soft") {
+  return execFileAsync(VMRUN_PATH, ["reset", vmxPath, mode]);
+}
+
 export async function vmSnapshot(vmxPath: string, name: string) {
   return execFileAsync(VMRUN_PATH, ["snapshot", vmxPath, name]);
 }

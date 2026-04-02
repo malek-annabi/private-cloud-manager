@@ -4,12 +4,16 @@ export function Button({
   type = "button",
   variant = "primary",
   disabled = false,
+  title,
+  className = "",
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   type?: "button" | "submit";
   variant?: "primary" | "secondary" | "ghost" | "danger";
   disabled?: boolean;
+  title?: string;
+  className?: string;
 }) {
   const classes = {
     primary:
@@ -27,7 +31,8 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${classes[variant]}`}
+      title={title}
+      className={`inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${classes[variant]} ${className}`}
     >
       {children}
     </button>

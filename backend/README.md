@@ -25,6 +25,7 @@ The backend is responsible for:
 - tracking VM activity such as `last seen online` and `last SSH login`
 - running managed Ubuntu update jobs and persisting patch metadata
 - refreshing remote OS family/version and reboot-needed state on interactive SSH connect
+- exposing lightweight API traffic telemetry for dashboard charts
 
 ## Important Routes
 
@@ -42,6 +43,7 @@ The backend is responsible for:
 - `POST /api/jobs/ssh`
 - `POST /api/jobs/update-vm`
 - `GET /api/audit`
+- `GET /api/metrics/traffic`
 
 ## Database Model
 
@@ -104,6 +106,7 @@ http://127.0.0.1:8000
 - Ubuntu update jobs depend on working SSH credentials and `sudo` privileges on the guest
 - interactive SSH sessions also refresh OS family/version and reboot-required state
 - `GET /api/vms/:id/update-feed` gives an on-demand Ubuntu package change feed, including security candidates and kernel/core package highlights
+- `GET /api/metrics/traffic` gives in-memory frontend/backend API traffic buckets for the dashboard
 - `FG-VM` is treated as critical lab infrastructure and routine stop actions are guarded unless an explicit override is provided
 
 ## Setup Checklist

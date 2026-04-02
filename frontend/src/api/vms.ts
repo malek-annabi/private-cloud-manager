@@ -79,3 +79,8 @@ export const fetchVmUpdateFeed = async (
   });
   return res.data;
 };
+
+export const refreshVmState = async (vmId: string) => {
+  const res = await api.post(`/vms/${vmId}/refresh-state`);
+  return res.data;
+};

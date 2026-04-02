@@ -9,6 +9,9 @@ interface SSHOptions {
   password?: string;
   command: string;
   timeoutMs?: number;
+  stdinData?: string;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }
 
 export function executeSSH(options: SSHOptions): Promise<{
@@ -36,6 +39,11 @@ export function executeSSH(options: SSHOptions): Promise<{
             return reject(err);
           }
 
+          if (options.stdinData) {
+            stream.write(options.stdinData);
+            stream.end();
+          }
+
           stream
             .on("close", (code: number) => {
               clearTimeout(timeout);
@@ -44,11 +52,15 @@ export function executeSSH(options: SSHOptions): Promise<{
               resolve({ stdout, stderr, code: exitCode });
             })
             .on("data", (data: Buffer) => {
-              stdout += data.toString();
+              const chunk = data.toString();
+              stdout += chunk;
+              options.onStdout?.(chunk);
             });
 
           stream.stderr.on("data", (data: Buffer) => {
-            stderr += data.toString();
+            const chunk = data.toString();
+            stderr += chunk;
+            options.onStderr?.(chunk);
           });
         });
       })

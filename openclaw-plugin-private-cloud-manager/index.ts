@@ -265,6 +265,147 @@ async function executeGetUpdateFeed(
   );
 }
 
+async function executeRefreshVmState(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const payload = await apiRequest(
+    ctx,
+    `/vms/${encodeURIComponent(params.vmId)}/refresh-state`,
+    {
+      method: "POST",
+    }
+  );
+
+  return textResult(
+    [
+      `VM state refreshed for ${payload.name ?? params.vmId}.`,
+      payload.powerState ? `powerState=${payload.powerState}` : null,
+      payload.osVersion ? `os=${payload.osVersion}` : null,
+      typeof payload.rebootRequired === "boolean"
+        ? `rebootRequired=${payload.rebootRequired ? "yes" : "no"}`
+        : null,
+      payload.lastSeenOnlineAt ? `lastSeenOnlineAt=${payload.lastSeenOnlineAt}` : null,
+      payload.lastSshLoginAt ? `lastSshLoginAt=${payload.lastSshLoginAt}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+async function executeRebootVm(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const job = await apiRequest(ctx, "/jobs/reboot-vm", {
+    method: "POST",
+    body: JSON.stringify({
+      vmId: params.vmId,
+      rebootMode: params.rebootMode ?? "soft",
+    }),
+  });
+
+  return textResult(
+    `Reboot VM job queued.\nThis call only queued a VM reboot action.\n${formatJobSummary(job)}`
+  );
+}
+
+async function executeGetTrafficMetrics(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const hours = params.hours ?? 12;
+  const payload = await apiRequest(
+    ctx,
+    `/metrics/traffic?hours=${encodeURIComponent(String(hours))}`
+  );
+
+  const buckets = Array.isArray(payload?.buckets) ? payload.buckets : [];
+  const lines = buckets.map(
+    (bucket: any) =>
+      `- ${bucket.label}: requests=${bucket.requests ?? 0}, inboundKB=${(((bucket.inboundBytes ?? 0) / 1024)).toFixed(2)}, outboundKB=${(((bucket.outboundBytes ?? 0) / 1024)).toFixed(2)}`
+  );
+
+  return textResult(
+    [
+      `Traffic telemetry for the last ${payload?.hours ?? hours} hour(s).`,
+      `generatedAt=${payload?.generatedAt ?? "unknown"}`,
+      lines.length ? `buckets:\n${lines.join("\n")}` : "buckets:\n- none",
+    ].join("\n")
+  );
+}
+
+async function executeRotateSecurityUpdates(
+  _toolCallId: string,
+  _params: any,
+  ctx: any
+) {
+  const vms = await fetchVmsForRunbook(ctx);
+  const candidates = vms.filter(
+    (vm: any) =>
+      vm.powerState === "ON" &&
+      vm.osFamily?.toLowerCase?.() === "ubuntu" &&
+      vm.type !== "TEMPLATE" &&
+      !vm.isCriticalInfrastructure
+  );
+
+  const queued: string[] = [];
+  const blocked: string[] = [];
+  const skipped: string[] = [];
+  const errors: string[] = [];
+
+  for (const vm of candidates) {
+    try {
+      const feed = await apiRequest(
+        ctx,
+        `/vms/${encodeURIComponent(vm.id)}/update-feed?mode=security`
+      );
+      const packages = Array.isArray(feed?.packages) ? feed.packages : [];
+      const criticalSecurity = packages.filter(
+        (item: any) => item?.securityCandidate && item?.critical
+      );
+
+      if (criticalSecurity.length > 0) {
+        blocked.push(`${vm.id} (${criticalSecurity.map((item: any) => item.name).join(", ")})`);
+        continue;
+      }
+
+      if ((feed?.securityCandidateCount ?? 0) <= 0) {
+        skipped.push(`${vm.id} (no security candidates)`);
+        continue;
+      }
+
+      await apiRequest(ctx, "/jobs/update-vm", {
+        method: "POST",
+        body: JSON.stringify({
+          vmId: vm.id,
+          mode: "security",
+          autoremove: false,
+        }),
+      });
+      queued.push(`${vm.id} (${feed.securityCandidateCount} candidates)`);
+    } catch (error: any) {
+      errors.push(`${vm.id} (${error?.message ?? "unknown error"})`);
+    }
+  }
+
+  return textResult(
+    [
+      "Security rotation runbook completed.",
+      `candidates=${candidates.length}`,
+      `queued=${queued.length ? queued.join(", ") : "none"}`,
+      `blocked=${blocked.length ? blocked.join(", ") : "none"}`,
+      `skipped=${skipped.length ? skipped.join(", ") : "none"}`,
+      errors.length ? `errors=${errors.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
 async function fetchVmsForRunbook(ctx: any) {
   const vms = await apiRequest(ctx, "/vms");
   return Array.isArray(vms) ? vms : [];
@@ -570,6 +711,82 @@ const privateCloudManagerPlugin = {
 
     api.registerTool(
       (ctx: any) => ({
+        name: "pcm_refresh_vm_state",
+        label: "PCM Refresh VM State",
+        description:
+          "Refresh the current live state and guest metadata for a VM through the backend SSH path.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "The VM id to refresh.",
+            },
+          },
+          required: ["vmId"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeRefreshVmState(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_reboot_vm",
+        label: "PCM Reboot VM",
+        description:
+          "Queue a reboot job for a VM. Use soft for normal maintenance and hard when the guest is stuck.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "The VM id to reboot.",
+            },
+            rebootMode: {
+              type: "string",
+              enum: ["soft", "hard"],
+              description: "The reboot style to queue.",
+            },
+          },
+          required: ["vmId"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeRebootVm(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_get_traffic_metrics",
+        label: "PCM Get Traffic Metrics",
+        description:
+          "Fetch frontend-to-backend API traffic telemetry buckets from the dashboard backend.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            hours: {
+              type: "number",
+              description: "How many recent hours to inspect, between 1 and 24.",
+            },
+          },
+        },
+        execute(toolCallId: string, params: any) {
+          return executeGetTrafficMetrics(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
         name: "pcm_fire_lab",
         label: "PCM Fire Lab",
         description:
@@ -588,6 +805,24 @@ const privateCloudManagerPlugin = {
         },
         execute(toolCallId: string, params: any) {
           return executeFireLab(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_rotate_security_updates",
+        label: "PCM Rotate Security Updates",
+        description:
+          "Inspect running Ubuntu VMs with the security feed, hold anything with critical or kernel-class security changes, and queue only safer security-only update jobs.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+        execute(toolCallId: string, params: any) {
+          return executeRotateSecurityUpdates(toolCallId, params, ctx);
         },
       }),
       { optional: true }

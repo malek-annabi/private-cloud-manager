@@ -1,19 +1,47 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  Filler,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  type ChartData,
+  type ChartOptions,
+} from "chart.js";
+import { Line } from "react-chartjs-2";
 import { useVMs } from "../hooks/useVMs";
+import { useJobs } from "../hooks/useJobs";
+import { useCyberNews } from "../hooks/useCyberNews";
+import { useTrafficMetrics } from "../hooks/useTrafficMetrics";
+import type { CyberNewsItem } from "../api/news";
 import {
   checkVmSshReady,
   fetchVmUpdateFeed,
+  refreshVmState,
   type VmUpdateFeedRecord,
   type VmRecord,
   updateVmConnection,
   updateVmTags,
 } from "../api/vms";
-import { startVM, stopVM, updateVM } from "../api/jobs";
+import { rebootVM, startVM, stopVM, updateVM } from "../api/jobs";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import SSHTerminal from "../components/ssh/Terminal";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+  Filler,
+);
 
 type LabPreset = {
   id: "blue-team" | "red-team" | "purple-team" | "wg-vpn";
@@ -22,6 +50,25 @@ type LabPreset = {
   stopLabel: string;
   description: string;
   vmIds: string[];
+  tone: "info" | "danger" | "neutral" | "success";
+};
+
+type SecurityRotationSummary = {
+  candidateCount: number;
+  queued: Array<{ vmId: string; vmName: string; securityCount: number }>;
+  blocked: Array<{ vmId: string; vmName: string; reasons: string[] }>;
+  skipped: Array<{ vmId: string; vmName: string; reason: string }>;
+  errors: Array<{ vmId: string; vmName: string; error: string }>;
+  generatedAt: string;
+};
+
+type JobTrendPoint = {
+  label: string;
+  start: number;
+  stop: number;
+  update: number;
+  other: number;
+  total: number;
 };
 
 const CRITICAL_GATEWAY_VM_ID = "FG-VM";
@@ -34,6 +81,7 @@ const LAB_PRESETS: LabPreset[] = [
     stopLabel: "Stop Blue Team Lab",
     description: "Starts FG-VM if needed, then Wazuh, IRIS, and MISP.",
     vmIds: ["wazuh", "iris", "misp"],
+    tone: "info",
   },
   {
     id: "red-team",
@@ -42,6 +90,7 @@ const LAB_PRESETS: LabPreset[] = [
     stopLabel: "Stop Red Team Lab",
     description: "Starts FG-VM if needed, then Kali and the victim node.",
     vmIds: ["kali-01", "ubuntu-server-victim"],
+    tone: "danger",
   },
   {
     id: "purple-team",
@@ -50,6 +99,7 @@ const LAB_PRESETS: LabPreset[] = [
     stopLabel: "Stop Purple Team Lab",
     description: "Starts FG-VM if needed, then Wazuh, IRIS, Kali, and the victim node.",
     vmIds: ["wazuh", "iris", "kali-01", "ubuntu-server-victim"],
+    tone: "neutral",
   },
   {
     id: "wg-vpn",
@@ -58,12 +108,16 @@ const LAB_PRESETS: LabPreset[] = [
     stopLabel: "Stop WG-VPN",
     description: "Starts FG-VM if needed, then WireGuard.",
     vmIds: ["wireguard"],
+    tone: "success",
   },
 ];
 
 export default function VMs() {
   const queryClient = useQueryClient();
   const { data = [], isLoading } = useVMs();
+  const { data: jobs = [] } = useJobs();
+  const { data: cyberNews, isLoading: isLoadingCyberNews } = useCyberNews(40);
+  const { data: trafficMetrics } = useTrafficMetrics(12);
   const [sshSessions, setSshSessions] = useState<Array<{ id: string; vmId: string }>>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -89,6 +143,19 @@ export default function VMs() {
   const [updateFeed, setUpdateFeed] = useState<VmUpdateFeedRecord | null>(null);
   const [loadingUpdateFeedFor, setLoadingUpdateFeedFor] = useState<string | null>(null);
   const [updateFeedError, setUpdateFeedError] = useState("");
+  const [isRunningSecurityRotation, setIsRunningSecurityRotation] = useState(false);
+  const [securityRotationSummary, setSecurityRotationSummary] =
+    useState<SecurityRotationSummary | null>(null);
+  const [rebootVmState, setRebootVmState] = useState<{
+    vmId: string;
+    source: "power" | "required";
+  } | null>(null);
+  const [isQueueingRebootFor, setIsQueueingRebootFor] = useState<string | null>(null);
+  const [refreshingVmId, setRefreshingVmId] = useState<string | null>(null);
+  const [showAllCyberNews, setShowAllCyberNews] = useState(false);
+  const [isCyberNewsPaused, setIsCyberNewsPaused] = useState(false);
+  const [selectedCyberStory, setSelectedCyberStory] = useState<CyberNewsItem | null>(null);
+  const cyberNewsScrollerRef = useRef<HTMLDivElement | null>(null);
 
   const stats = {
     total: data.length,
@@ -132,6 +199,7 @@ export default function VMs() {
     () => buildDailyHeatmap(data.map((vm) => vm.lastUpdatedAt), 7),
     [data],
   );
+  const jobTrend = useMemo(() => buildJobTrend(jobs, 10), [jobs]);
   const visibleVms = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const powerRank = {
@@ -207,6 +275,33 @@ export default function VMs() {
     }
   }, [activeSessionId, sshSessions]);
 
+  useEffect(() => {
+    const container = cyberNewsScrollerRef.current;
+    if (!container || isCyberNewsPaused) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      if (!container) {
+        return;
+      }
+
+      const maxScrollTop = container.scrollHeight - container.clientHeight;
+      if (maxScrollTop <= 0) {
+        return;
+      }
+
+      if (container.scrollTop >= maxScrollTop - 2) {
+        container.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+
+      container.scrollTop += 1;
+    }, 50);
+
+    return () => window.clearInterval(interval);
+  }, [cyberNews?.items.length, isCyberNewsPaused, showAllCyberNews]);
+
   if (isLoading) return <div>Loading...</div>;
 
   const saveTags = async (vm: VmRecord) => {
@@ -247,6 +342,19 @@ export default function VMs() {
     }
   };
 
+  const queueVmReboot = async (vm: VmRecord, rebootMode: "soft" | "hard") => {
+    setIsQueueingRebootFor(vm.id);
+
+    try {
+      await rebootVM(vm.id, { rebootMode });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      setRebootVmState(null);
+    } finally {
+      setIsQueueingRebootFor(null);
+    }
+  };
+
   const runVmUpdate = async (vmId: string) => {
     setUpdatingVmId(vmId);
 
@@ -258,6 +366,17 @@ export default function VMs() {
     }
   };
 
+  const runVmRefresh = async (vmId: string) => {
+    setRefreshingVmId(vmId);
+
+    try {
+      await refreshVmState(vmId);
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+    } finally {
+      setRefreshingVmId(null);
+    }
+  };
+
   const openUpdateFeed = async (vm: VmRecord) => {
     setUpdateFeedVmId(vm.id);
     setUpdateFeed(null);
@@ -265,6 +384,16 @@ export default function VMs() {
     setLoadingUpdateFeedFor(vm.id);
 
     try {
+      if (vm.powerState !== "ON") {
+        setUpdateFeedError("Start this VM first, then reopen the security feed to inspect live package changes.");
+        return;
+      }
+
+      if (vm.osFamily?.toLowerCase() !== "ubuntu") {
+        setUpdateFeedError("The security feed is currently available only for running Ubuntu VMs.");
+        return;
+      }
+
       const feed = await fetchVmUpdateFeed(vm.id, "security");
       setUpdateFeed(feed);
     } catch (error: any) {
@@ -331,6 +460,79 @@ export default function VMs() {
       setRunningLabActionId(null);
       setStopLabPreset(null);
       setIncludeGatewayOnStop(false);
+    }
+  };
+
+  const runSecurityRotation = async () => {
+    setIsRunningSecurityRotation(true);
+    setSecurityRotationSummary(null);
+
+    const candidates = data.filter(
+      (vm) =>
+        vm.powerState === "ON" &&
+        vm.osFamily?.toLowerCase() === "ubuntu" &&
+        vm.type !== "TEMPLATE" &&
+        !vm.isCriticalInfrastructure,
+    );
+
+    const summary: SecurityRotationSummary = {
+      candidateCount: candidates.length,
+      queued: [],
+      blocked: [],
+      skipped: [],
+      errors: [],
+      generatedAt: new Date().toISOString(),
+    };
+
+    try {
+      for (const vm of candidates) {
+        try {
+          const feed = await fetchVmUpdateFeed(vm.id, "security");
+          const criticalSecurityPackages = feed.packages.filter(
+            (item) => item.securityCandidate && item.critical,
+          );
+
+          if (criticalSecurityPackages.length > 0) {
+            summary.blocked.push({
+              vmId: vm.id,
+              vmName: vm.name,
+              reasons: criticalSecurityPackages.map((item) => item.name),
+            });
+            continue;
+          }
+
+          if (feed.securityCandidateCount <= 0) {
+            summary.skipped.push({
+              vmId: vm.id,
+              vmName: vm.name,
+              reason: "No security-targeted package changes detected.",
+            });
+            continue;
+          }
+
+          await updateVM(vm.id, { mode: "security", autoremove: false });
+          summary.queued.push({
+            vmId: vm.id,
+            vmName: vm.name,
+            securityCount: feed.securityCandidateCount,
+          });
+        } catch (error: any) {
+          summary.errors.push({
+            vmId: vm.id,
+            vmName: vm.name,
+            error:
+              error?.response?.data?.error ??
+              error?.message ??
+              "Unknown rotation error",
+          });
+        }
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      setSecurityRotationSummary(summary);
+    } finally {
+      setIsRunningSecurityRotation(false);
     }
   };
 
@@ -498,60 +700,173 @@ export default function VMs() {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          <StatCard label="Total" value={stats.total} tone="info" compact />
-          <StatCard label="Running" value={stats.running} tone="success" compact />
-          <StatCard label="Off" value={stats.stopped} tone="warning" compact />
-          <StatCard
-            label="Need reboot"
-            value={stats.rebootRequired}
-            tone={stats.rebootRequired > 0 ? "danger" : "neutral"}
-            compact
-          />
-          <StatCard
-            label="Updated 7d"
-            value={stats.updatedThisWeek}
-            tone="info"
-            compact
-          />
-          <StatCard
-            label="SSH 24h"
-            value={stats.sshThisDay}
-            tone="success"
-            compact
-          />
-        </div>
-
-        <Card className="border-white/10 bg-white/5">
-          <div className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
-                  Fleet cadence
-                </p>
-                <h2 className="mt-2 text-lg font-semibold text-white">
-                  Recent SSH and update activity
-                </h2>
-              </div>
-              <div className="text-right text-xs text-slate-400">
-                <div>Last SSH: <span className="text-slate-200">{latestSshLogin ? formatRelativeDate(latestSshLogin) : "Never"}</span></div>
-                <div>Last update: <span className="text-slate-200">{latestUpdate ? formatRelativeDate(latestUpdate) : "Never"}</span></div>
-              </div>
-            </div>
-
-            <HeatRow
-              label="SSH timeline"
-              cells={sshHeatmap}
-              emptyLabel="No recent SSH logins"
+      <div className="grid items-start gap-4 xl:grid-cols-[1.18fr_0.82fr]">
+        <div className="grid self-start gap-4">
+          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <StatCard label="Total" value={stats.total} tone="info" sparkline={buildMetricSparkline(stats.total, Math.max(stats.total, 1))} compact />
+            <StatCard label="Running" value={stats.running} tone="success" sparkline={buildMetricSparkline(stats.running, Math.max(stats.total, 1))} compact />
+            <StatCard label="Off" value={stats.stopped} tone="warning" sparkline={buildMetricSparkline(stats.stopped, Math.max(stats.total, 1))} compact />
+            <StatCard
+              label="Need reboot"
+              value={stats.rebootRequired}
+              tone={stats.rebootRequired > 0 ? "danger" : "neutral"}
+              sparkline={buildMetricSparkline(stats.rebootRequired, Math.max(stats.total, 1))}
+              compact
             />
-            <HeatRow
-              label="Update timeline"
-              cells={updateHeatmap}
-              emptyLabel="No recent updates"
+            <StatCard
+              label="Updated 7d"
+              value={stats.updatedThisWeek}
+              tone="info"
+              sparkline={buildMetricSparkline(stats.updatedThisWeek, Math.max(stats.total, 1))}
+              compact
+            />
+            <StatCard
+              label="SSH 24h"
+              value={stats.sshThisDay}
+              tone="success"
+              sparkline={buildMetricSparkline(stats.sshThisDay, Math.max(stats.total, 1))}
+              compact
             />
           </div>
-        </Card>
+
+          <Card className="border-white/10 bg-white/5">
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Job volume
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold text-white">
+                    Execution trend over time
+                  </h2>
+                </div>
+                <div className="text-right text-xs text-slate-400">
+                  <div>Total jobs: <span className="text-slate-200">{jobs.length}</span></div>
+                  <div>Last 10 hours</div>
+                </div>
+              </div>
+
+              <JobsLineChart points={jobTrend} />
+            </div>
+          </Card>
+
+          <Card className="border-white/10 bg-white/5">
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Traffic volume
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold text-white">
+                    Frontend to backend API traffic
+                  </h2>
+                </div>
+                <div className="text-right text-xs text-slate-400">
+                  <div>
+                    Window: <span className="text-slate-200">Last 12 hours</span>
+                  </div>
+                  <div>
+                    Samples: <span className="text-slate-200">{trafficMetrics?.buckets.length ?? 0}</span>
+                  </div>
+                </div>
+              </div>
+
+              <TrafficLineChart buckets={trafficMetrics?.buckets ?? []} />
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid self-start gap-4">
+          <Card className="border-white/10 bg-white/5">
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Fleet cadence
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold text-white">
+                    Recent SSH and update activity
+                  </h2>
+                </div>
+                <div className="text-right text-xs text-slate-400">
+                  <div>Last SSH: <span className="text-slate-200">{latestSshLogin ? formatRelativeDate(latestSshLogin) : "Never"}</span></div>
+                  <div>Last update: <span className="text-slate-200">{latestUpdate ? formatRelativeDate(latestUpdate) : "Never"}</span></div>
+                </div>
+              </div>
+
+              <HeatRow
+                label="SSH timeline"
+                cells={sshHeatmap}
+                emptyLabel="No recent SSH logins"
+              />
+              <HeatRow
+                label="Update timeline"
+                cells={updateHeatmap}
+                emptyLabel="No recent updates"
+              />
+            </div>
+          </Card>
+
+          <Card className="border-white/10 bg-white/5">
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Cyber News
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold text-white">
+                    Top stories
+                  </h2>
+                </div>
+                <div className="text-right text-xs text-slate-500">
+                  {cyberNews?.fetchedAt ? `Updated ${formatRelativeDate(cyberNews.fetchedAt)}` : "Live RSS"}
+                </div>
+              </div>
+
+              <div
+                ref={cyberNewsScrollerRef}
+                onMouseEnter={() => setIsCyberNewsPaused(true)}
+                onMouseLeave={() => setIsCyberNewsPaused(false)}
+                onFocus={() => setIsCyberNewsPaused(true)}
+                onBlur={() => setIsCyberNewsPaused(false)}
+                className={`${showAllCyberNews ? "max-h-[42rem]" : "max-h-[30rem]"} space-y-2 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0`}
+              >
+                {isLoadingCyberNews ? (
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4 text-sm text-slate-300">
+                    Loading cyber news feed...
+                  </div>
+                ) : (cyberNews?.items.length ?? 0) > 0 ? (
+                  cyberNews!.items.map((item, index) => (
+                    <CyberNewsRow
+                      key={`${item.link}-${index}`}
+                      item={item}
+                      onOpen={() => setSelectedCyberStory(item)}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4 text-sm text-slate-300">
+                    No cyber stories are available right now.
+                  </div>
+                )}
+              </div>
+
+              {cyberNews && cyberNews.items.length > 5 ? (
+                <div className="flex items-center justify-between gap-4 pt-1">
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
+                    Auto-scrolling feed, hover to pause
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCyberNews((current) => !current)}
+                    className="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
+                  >
+                    {showAllCyberNews ? "Show less" : "Show more"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </Card>
+        </div>
       </div>
 
       <Card className="border-white/10 bg-white/5">
@@ -609,10 +924,136 @@ export default function VMs() {
                       {runningLabActionId === `stop:${preset.id}` ? "Stopping..." : preset.stopLabel}
                     </Button>
                   </div>
+
+                  <div className="flex items-end justify-between pt-1">
+                    <div className="flex items-center gap-2">
+                      <LogoStrip hints={[CRITICAL_GATEWAY_VM_ID, ...preset.vmIds]} />
+                    </div>
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">
+                      lab preset
+                    </p>
+                  </div>
                 </div>
               </Card>
             ))}
           </div>
+
+          <Card className="border-white/10 bg-slate-950/70 p-5">
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Rotate Security Updates</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Check the security feed on running Ubuntu VMs, hold anything with critical or
+                    kernel-class changes, and queue only the safer security-only patch jobs.
+                  </p>
+                </div>
+                <Badge
+                  label={`${data.filter((vm) => vm.powerState === "ON" && vm.osFamily?.toLowerCase() === "ubuntu" && !vm.isCriticalInfrastructure && vm.type !== "TEMPLATE").length} candidates`}
+                  tone="info"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  disabled={isRunningSecurityRotation}
+                  onClick={() => void runSecurityRotation()}
+                >
+                  {isRunningSecurityRotation ? "Reviewing..." : "Rotate Security Updates"}
+                </Button>
+                {securityRotationSummary ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setSecurityRotationSummary(null)}
+                  >
+                    Clear summary
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </Card>
+
+          {securityRotationSummary ? (
+            <Card className="border-white/10 bg-slate-950/70 p-5 xl:col-span-2">
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                      Rotation summary
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-white">
+                      Security-only patch review
+                    </h3>
+                  </div>
+                  <div className="text-sm text-slate-400">
+                    Generated {formatRelativeDate(securityRotationSummary.generatedAt)}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-4">
+                  <StatCard label="Candidates" value={securityRotationSummary.candidateCount} tone="info" compact />
+                  <StatCard label="Queued" value={securityRotationSummary.queued.length} tone="success" compact />
+                  <StatCard label="Blocked" value={securityRotationSummary.blocked.length} tone="danger" compact />
+                  <StatCard label="Skipped" value={securityRotationSummary.skipped.length} tone="warning" compact />
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-3">
+                  <Card className="border-white/10 bg-slate-900/70">
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-semibold text-white">Queued updates</h4>
+                      {securityRotationSummary.queued.length > 0 ? (
+                        securityRotationSummary.queued.map((item) => (
+                          <div key={item.vmId} className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+                            {item.vmName} queued with {item.securityCount} security candidates.
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-slate-400">No VMs were queued this run.</p>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card className="border-white/10 bg-slate-900/70">
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-semibold text-white">Blocked for review</h4>
+                      {securityRotationSummary.blocked.length > 0 ? (
+                        securityRotationSummary.blocked.map((item) => (
+                          <div key={item.vmId} className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                            <div className="font-medium">{item.vmName}</div>
+                            <div className="mt-1 text-xs text-rose-100/80">
+                              Critical packages: {item.reasons.join(", ")}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-sm text-slate-400">No critical security changes blocked this run.</p>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card className="border-white/10 bg-slate-900/70">
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-semibold text-white">Skipped and errors</h4>
+                      {securityRotationSummary.skipped.map((item) => (
+                        <div key={`skip-${item.vmId}`} className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-300">
+                          {item.vmName}: {item.reason}
+                        </div>
+                      ))}
+                      {securityRotationSummary.errors.map((item) => (
+                        <div key={`err-${item.vmId}`} className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                          {item.vmName}: {item.error}
+                        </div>
+                      ))}
+                      {securityRotationSummary.skipped.length === 0 &&
+                      securityRotationSummary.errors.length === 0 ? (
+                        <p className="text-sm text-slate-400">Nothing was skipped or failed.</p>
+                      ) : null}
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            </Card>
+          ) : null}
         </div>
       </Card>
 
@@ -829,20 +1270,40 @@ export default function VMs() {
               <div className="space-y-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-3">
-                    <div>
+                    <div className="flex items-start gap-3">
+                      <BrandLogo
+                        hint={`${vm.id} ${vm.name}`}
+                        osFamily={vm.osFamily}
+                        size="lg"
+                      />
+                      <div>
                       <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
                         {vm.type}
                       </p>
                       <h2 className="mt-2 text-2xl font-semibold text-white">
                         {vm.name}
                       </h2>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <PowerBadge powerState={vm.powerState} />
+                      <PowerBadge
+                        powerState={vm.powerState}
+                        onClick={
+                          vm.powerState === "ON"
+                            ? () => setRebootVmState({ vmId: vm.id, source: "power" })
+                            : undefined
+                        }
+                      />
                       {vm.isCriticalInfrastructure ? (
                         <Badge label="Critical infrastructure" tone="warning" />
                       ) : null}
-                      {vm.rebootRequired ? <Badge label="Reboot required" tone="danger" /> : null}
+                      {vm.rebootRequired ? (
+                        <Badge
+                          label="Reboot required"
+                          tone="danger"
+                          onClick={() => setRebootVmState({ vmId: vm.id, source: "required" })}
+                        />
+                      ) : null}
                       {vm.sshHost ? (
                         <Badge
                           label={`${vm.sshUser ?? "user"}@${vm.sshHost}:${vm.sshPort ?? 22}`}
@@ -929,46 +1390,83 @@ export default function VMs() {
                   <Button
                     disabled={isStarting || isOpeningSessionFor === vm.id || !canStartVm}
                     onClick={() => runVmAction(vm.id, "start")}
+                    title={canStartVm ? `Start ${vm.name}` : `${vm.name} is already running`}
+                    className="px-3"
                   >
-                    {isStarting ? "Starting..." : "Start VM"}
+                    {isStarting ? <SpinnerIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
                   </Button>
                   <Button
                     variant="danger"
                     disabled={isStopping || !canStopVm}
                     onClick={() => runVmAction(vm.id, "stop")}
+                    title={canStopVm ? `Stop ${vm.name}` : `${vm.name} is already powered off`}
+                    className="px-3"
                   >
-                    {isStopping ? "Stopping..." : "Stop VM"}
+                    {isStopping ? <SpinnerIcon className="h-4 w-4" /> : <StopIcon className="h-4 w-4" />}
                   </Button>
                   <Button
                     variant={isSelected ? "secondary" : "ghost"}
                     disabled={isOpeningSessionFor === vm.id}
                     onClick={() => void handleSshClick(vm)}
+                    title={
+                      isSelected
+                        ? `${vm.name} already has an active SSH tab`
+                        : `Open SSH for ${vm.name}`
+                    }
+                    className="px-3"
                   >
-                    {isOpeningSessionFor === vm.id
-                      ? "Preparing SSH..."
-                      : isSelected
-                        ? "Active tab"
-                        : "Open SSH"}
+                    {isOpeningSessionFor === vm.id ? (
+                      <SpinnerIcon className="h-4 w-4" />
+                    ) : isSelected ? (
+                      <TerminalIcon className="h-4 w-4" />
+                    ) : (
+                      <TerminalIcon className="h-4 w-4" />
+                    )}
                   </Button>
                   <Button
                     variant="secondary"
                     onClick={() => openConnectionModal(vm)}
+                    title={`Edit connection for ${vm.name}`}
+                    className="px-3"
                   >
-                    Edit connection
+                    <SettingsIcon className="h-4 w-4" />
                   </Button>
+                  {vm.powerState === "ON" ? (
+                    <Button
+                      variant="ghost"
+                      disabled={refreshingVmId === vm.id}
+                      onClick={() => void runVmRefresh(vm.id)}
+                      title={`Refresh live state for ${vm.name}`}
+                      className="px-3"
+                    >
+                      {refreshingVmId === vm.id ? (
+                        <SpinnerIcon className="h-4 w-4" />
+                      ) : (
+                        <RefreshIcon className="h-4 w-4" />
+                      )}
+                    </Button>
+                  ) : null}
                   <Button
                     variant="secondary"
                     disabled={!canUpdateVm || isUpdating}
                     onClick={() => runVmUpdate(vm.id)}
+                    title={`Queue security updates for ${vm.name}`}
+                    className="px-3"
                   >
-                    {isUpdating ? "Queueing update..." : "Security update"}
+                    {isUpdating ? <SpinnerIcon className="h-4 w-4" /> : <ShieldIcon className="h-4 w-4" />}
                   </Button>
                   <Button
                     variant="ghost"
-                    disabled={loadingUpdateFeedFor === vm.id || vm.powerState !== "ON"}
+                    disabled={loadingUpdateFeedFor === vm.id}
                     onClick={() => void openUpdateFeed(vm)}
+                    title={`Open security feed for ${vm.name}`}
+                    className="px-3"
                   >
-                    {loadingUpdateFeedFor === vm.id ? "Loading feed..." : "Security feed"}
+                    {loadingUpdateFeedFor === vm.id ? (
+                      <SpinnerIcon className="h-4 w-4" />
+                    ) : (
+                      <FeedIcon className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
 
@@ -1443,6 +1941,131 @@ export default function VMs() {
           </Card>
         </div>
       )}
+
+      {rebootVmState ? (
+        <div className="fixed inset-0 z-[106] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl border-white/10 bg-slate-950">
+            {(() => {
+              const vm = data.find((candidate) => candidate.id === rebootVmState.vmId) ?? null;
+
+              if (!vm) {
+                return (
+                  <div className="space-y-4">
+                    <p className="text-white">VM not found.</p>
+                    <div className="flex justify-end">
+                      <Button variant="ghost" onClick={() => setRebootVmState(null)}>
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                      Power action
+                    </p>
+                    <h2 className="text-2xl font-semibold text-white">
+                      Reboot {vm.name}
+                    </h2>
+                    <p className="text-sm leading-6 text-slate-400">
+                      {rebootVmState.source === "required"
+                        ? "This VM is reporting a reboot requirement. Choose the reboot style that fits the current maintenance risk."
+                        : "Use this when the VM is stuck, a service is wedged, or you want a clean restart without adding another always-visible button to the card."}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Card className="border-white/10 bg-slate-900/70">
+                      <div className="space-y-3">
+                        <h3 className="text-base font-semibold text-white">Soft reboot</h3>
+                        <p className="text-sm text-slate-400">
+                          Uses VMware soft reset. This is the safer default when the guest is responsive.
+                        </p>
+                        <Button
+                          disabled={isQueueingRebootFor === vm.id}
+                          onClick={() => void queueVmReboot(vm, "soft")}
+                        >
+                          {isQueueingRebootFor === vm.id ? "Queueing..." : "Queue soft reboot"}
+                        </Button>
+                      </div>
+                    </Card>
+
+                    <Card className="border-white/10 bg-slate-900/70">
+                      <div className="space-y-3">
+                        <h3 className="text-base font-semibold text-white">Hard reset</h3>
+                        <p className="text-sm text-slate-400">
+                          Uses VMware hard reset. Prefer this only if the guest is hung or the soft path is not enough.
+                        </p>
+                        <Button
+                          variant="danger"
+                          disabled={isQueueingRebootFor === vm.id}
+                          onClick={() => void queueVmReboot(vm, "hard")}
+                        >
+                          {isQueueingRebootFor === vm.id ? "Queueing..." : "Queue hard reset"}
+                        </Button>
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button variant="ghost" onClick={() => setRebootVmState(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              );
+            })()}
+          </Card>
+        </div>
+      ) : null}
+
+      {selectedCyberStory ? (
+        <div className="fixed inset-0 z-[107] flex items-center justify-center bg-slate-950/75 px-4 py-8 backdrop-blur-sm">
+          <Card className="w-full max-w-3xl border-white/10 bg-slate-950">
+            <div className="space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Cyber news story
+                  </p>
+                  <h2 className="text-2xl font-semibold text-white">
+                    {selectedCyberStory.title}
+                  </h2>
+                  <p className="text-sm text-slate-400">
+                    {formatNewsRelative(selectedCyberStory.publishedAt)} · {selectedCyberStory.source}
+                  </p>
+                </div>
+                <Button variant="ghost" onClick={() => setSelectedCyberStory(null)}>
+                  Close
+                </Button>
+              </div>
+
+              <Card className="border-white/10 bg-slate-900/70">
+                <div className="space-y-4">
+                  <p className="text-base leading-7 text-slate-200">
+                    {selectedCyberStory.description ?? "No article summary was available in the feed, but you can open the source to read the full story."}
+                  </p>
+
+                  <div className="flex justify-end">
+                    <a
+                      href={selectedCyberStory.link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-400/15"
+                    >
+                      <ExternalLinkIcon className="h-4 w-4" />
+                      <span>Visit source</span>
+                    </a>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1451,19 +2074,59 @@ function StatCard({
   label,
   value,
   tone,
+  sparkline,
   compact = false,
 }: {
   label: string;
   value: number;
   tone: "neutral" | "success" | "warning" | "info" | "danger";
+  sparkline?: number[];
   compact?: boolean;
 }) {
   return (
-    <Card className={`border-white/10 bg-white/5 ${compact ? "p-4" : ""}`}>
-      <div className="space-y-2">
-        <Badge label={label} tone={tone} />
-        <div className={compact ? "text-2xl font-semibold text-white" : "text-3xl font-semibold text-white"}>
-          {value}
+    <Card
+      className={`self-start border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.62))] ${
+        compact ? "h-auto min-h-0 p-4" : "h-auto min-h-[8.75rem] p-4"
+      }`}
+    >
+      <div className="flex flex-col gap-2.5">
+        <div className="space-y-1">
+          <div className="min-h-[2rem]">
+            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
+              {label}
+            </p>
+          </div>
+          <div
+            className={
+              compact
+                ? "text-[2rem] font-semibold leading-none text-white"
+                : "text-[2.15rem] font-semibold leading-none text-white"
+            }
+          >
+            {value}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          {sparkline && sparkline.length > 0 ? (
+            <div className="flex h-4 items-end gap-1">
+              {sparkline.map((point, index) => (
+                <div
+                  key={`${label}-${index}`}
+                  className={`w-full rounded-full ${getSparkTrackTone(tone)}`}
+                >
+                  <div
+                    className={`w-full rounded-full ${getSparkFillTone(tone)}`}
+                    style={{ height: `${Math.max(point * 0.78, 16)}%` }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className={`h-[2px] rounded-full ${getStatTrackTone(tone)}`}>
+            <div className={`h-full w-1/2 rounded-full ${getStatFillTone(tone)}`} />
+          </div>
         </div>
       </div>
     </Card>
@@ -1501,6 +2164,338 @@ function HeatRow({
   );
 }
 
+function CyberNewsRow({
+  item,
+  onOpen,
+}: {
+  item: CyberNewsItem;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="block w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 transition hover:border-cyan-400/30 hover:bg-slate-950"
+    >
+      <div className="space-y-2 text-left">
+        <p className="text-base font-semibold leading-6 text-white">
+          {item.title}
+        </p>
+        <p className="text-sm text-slate-400">
+          {formatNewsRelative(item.publishedAt)} · {item.source}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+function JobsLineChart({
+  points,
+}: {
+  points: JobTrendPoint[];
+}) {
+  const chartData = useMemo<ChartData<"line">>(
+    () => ({
+      labels: points.map((point) => point.label.toUpperCase()),
+      datasets: [
+        {
+          label: "Start",
+          data: points.map((point) => point.start),
+          borderColor: "#67E8F9",
+          backgroundColor: "rgba(103,232,249,0.18)",
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+        },
+        {
+          label: "Stop",
+          data: points.map((point) => point.stop),
+          borderColor: "#FBBF24",
+          backgroundColor: "rgba(251,191,36,0.18)",
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+        },
+        {
+          label: "Update",
+          data: points.map((point) => point.update),
+          borderColor: "#F472B6",
+          backgroundColor: "rgba(244,114,182,0.18)",
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+        },
+        {
+          label: "Other",
+          data: points.map((point) => point.other),
+          borderColor: "#94A3B8",
+          backgroundColor: "rgba(148,163,184,0.18)",
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+        },
+        {
+          label: "Total",
+          data: points.map((point) => point.total),
+          borderColor: "#2DD4BF",
+          backgroundColor: "rgba(45,212,191,0.14)",
+          tension: 0.3,
+          borderWidth: 3,
+          pointRadius: 2.5,
+          pointHoverRadius: 5,
+          fill: true,
+        },
+      ],
+    }),
+    [points],
+  );
+
+  const chartOptions = useMemo<ChartOptions<"line">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "start",
+          labels: {
+            color: "#94a3b8",
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+            pointStyle: "circle",
+            padding: 18,
+            font: {
+              size: 11,
+            },
+          },
+        },
+        tooltip: {
+          backgroundColor: "rgba(2, 6, 23, 0.96)",
+          borderColor: "rgba(148, 163, 184, 0.18)",
+          borderWidth: 1,
+          titleColor: "#f8fafc",
+          bodyColor: "#cbd5e1",
+          displayColors: true,
+          padding: 12,
+          callbacks: {
+            title(items) {
+              return items[0]?.label ?? "";
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+          ticks: {
+            color: "#64748b",
+            font: {
+              size: 11,
+            },
+          },
+          border: {
+            display: false,
+          },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            precision: 0,
+            color: "#64748b",
+            font: {
+              size: 11,
+            },
+          },
+          grid: {
+            color: "rgba(148, 163, 184, 0.1)",
+            drawBorder: false,
+          },
+          border: {
+            display: false,
+          },
+        },
+      },
+      elements: {
+        line: {
+          capBezierPoints: true,
+        },
+      },
+    }),
+    [],
+  );
+
+  return (
+    <div className="rounded-[28px] border border-white/10 bg-slate-950/70 p-4">
+      <div className="h-[19rem]">
+        <Line data={chartData} options={chartOptions} />
+      </div>
+    </div>
+  );
+}
+
+function TrafficLineChart({
+  buckets,
+}: {
+  buckets: Array<{
+    label: string;
+    requests: number;
+    inboundBytes: number;
+    outboundBytes: number;
+  }>;
+}) {
+  const chartData = useMemo<ChartData<"line">>(
+    () => ({
+      labels: buckets.map((bucket) => bucket.label.toUpperCase()),
+      datasets: [
+        {
+          label: "Requests",
+          data: buckets.map((bucket) => bucket.requests),
+          borderColor: "#2DD4BF",
+          backgroundColor: "rgba(45,212,191,0.16)",
+          tension: 0.34,
+          borderWidth: 2.5,
+          pointRadius: 2.5,
+          pointHoverRadius: 5,
+          yAxisID: "requests",
+        },
+        {
+          label: "Inbound KB",
+          data: buckets.map((bucket) => Number((bucket.inboundBytes / 1024).toFixed(2))),
+          borderColor: "#67E8F9",
+          backgroundColor: "rgba(103,232,249,0.14)",
+          tension: 0.34,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          yAxisID: "kb",
+        },
+        {
+          label: "Outbound KB",
+          data: buckets.map((bucket) => Number((bucket.outboundBytes / 1024).toFixed(2))),
+          borderColor: "#A78BFA",
+          backgroundColor: "rgba(167,139,250,0.14)",
+          tension: 0.34,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          yAxisID: "kb",
+        },
+      ],
+    }),
+    [buckets],
+  );
+
+  const chartOptions = useMemo<ChartOptions<"line">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "start",
+          labels: {
+            color: "#94a3b8",
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+            pointStyle: "circle",
+            padding: 18,
+            font: {
+              size: 11,
+            },
+          },
+        },
+        tooltip: {
+          backgroundColor: "rgba(2, 6, 23, 0.96)",
+          borderColor: "rgba(148, 163, 184, 0.18)",
+          borderWidth: 1,
+          titleColor: "#f8fafc",
+          bodyColor: "#cbd5e1",
+          padding: 12,
+        },
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+          ticks: {
+            color: "#64748b",
+            font: {
+              size: 11,
+            },
+          },
+          border: {
+            display: false,
+          },
+        },
+        requests: {
+          type: "linear",
+          position: "left",
+          beginAtZero: true,
+          ticks: {
+            precision: 0,
+            color: "#64748b",
+            font: {
+              size: 11,
+            },
+          },
+          grid: {
+            color: "rgba(148, 163, 184, 0.1)",
+          },
+          border: {
+            display: false,
+          },
+        },
+        kb: {
+          type: "linear",
+          position: "right",
+          beginAtZero: true,
+          ticks: {
+            color: "#64748b",
+            font: {
+              size: 11,
+            },
+            callback(value) {
+              return `${value} KB`;
+            },
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+          border: {
+            display: false,
+          },
+        },
+      },
+    }),
+    [],
+  );
+
+  return (
+    <div className="rounded-[28px] border border-white/10 bg-slate-950/70 p-4">
+      <div className="h-[17rem]">
+        <Line data={chartData} options={chartOptions} />
+      </div>
+    </div>
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -1510,17 +2505,308 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PowerBadge({ powerState }: { powerState: VmRecord["powerState"] }) {
+function PowerBadge({
+  powerState,
+  onClick,
+}: {
+  powerState: VmRecord["powerState"];
+  onClick?: () => void;
+}) {
   if (powerState === "ON") {
-    return <Badge label="Running" tone="success" />;
+    return <Badge label="Running" tone="success" onClick={onClick} />;
   }
 
   if (powerState === "OFF") {
-    return <Badge label="Powered off" tone="warning" />;
+    return <Badge label="Powered off" tone="warning" onClick={onClick} />;
   }
 
-  return <Badge label="Unknown" tone="danger" />;
+  return <Badge label="Unknown" tone="danger" onClick={onClick} />;
 }
+
+type BrandLogoSize = "sm" | "lg";
+
+function LogoStrip({ hints }: { hints: string[] }) {
+  return (
+    <div className="flex items-center">
+      {hints.map((hint, index) => (
+        <div
+          key={`${hint}-${index}`}
+          className={index === 0 ? "" : "-ml-2"}
+        >
+          <BrandLogo hint={hint} size="sm" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BrandLogo({
+  hint,
+  osFamily,
+  size = "sm",
+}: {
+  hint: string;
+  osFamily?: string | null;
+  size?: BrandLogoSize;
+}) {
+  const [failed, setFailed] = useState(false);
+  const meta = getBrandLogoMeta(hint, osFamily);
+  const classes =
+    size === "lg"
+      ? "h-14 w-14 rounded-2xl"
+      : "h-10 w-10 rounded-xl";
+
+  if (!meta || failed) {
+    return (
+      <div
+        className={`flex items-center justify-center border border-white/10 bg-slate-900/80 ${classes}`}
+        title={meta?.label ?? hint}
+      >
+        <span className={size === "lg" ? "text-sm font-semibold text-slate-200" : "text-[10px] font-semibold text-slate-200"}>
+          {getLogoFallbackLabel(hint)}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`flex items-center justify-center border border-white/10 bg-slate-950/80 p-2 ${classes}`}
+      title={meta.label}
+    >
+      <img
+        src={meta.src}
+        alt={meta.label}
+        className="h-full w-full object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
+function getBrandLogoMeta(hint: string, osFamily?: string | null) {
+  const value = hint.toLowerCase();
+
+  if (value.includes("fg-vm") || value.includes("fortigate")) {
+    return {
+      label: "Fortinet",
+      src: "https://cdn.simpleicons.org/fortinet/EE3124",
+    };
+  }
+
+  if (value.includes("wireguard")) {
+    return {
+      label: "WireGuard",
+      src: "https://cdn.simpleicons.org/wireguard/88171A",
+    };
+  }
+
+  if (value.includes("pihole") || value.includes("pi-hole")) {
+    return {
+      label: "Pi-hole",
+      src: "https://upload.wikimedia.org/wikipedia/en/thumb/1/15/Pi-hole_vector_logo.svg/960px-Pi-hole_vector_logo.svg.png",
+    };
+  }
+
+  if (value.includes("n8n")) {
+    return {
+      label: "n8n",
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/N8n-logo-new.svg/1920px-N8n-logo-new.svg.png",
+    };
+  }
+
+  if (value.includes("nextcloud")) {
+    return {
+      label: "Nextcloud",
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/60/Nextcloud_Logo.svg/1280px-Nextcloud_Logo.svg.png",
+    };
+  }
+
+  if (value.includes("synology")) {
+    return {
+      label: "Synology",
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/48/Synology_Logo.svg/1920px-Synology_Logo.svg.png",
+    };
+  }
+
+  if (value.includes("t-pot") || value.includes("tpot")) {
+    return {
+      label: "T-Pot",
+      src: "https://raw.githubusercontent.com/telekom-security/tpotce/refs/heads/master/doc/tpotsocial.png",
+    };
+  }
+
+  if (value.includes("dolibarr")) {
+    return {
+      label: "Dolibarr",
+      src: "https://www.google.com/s2/favicons?domain=dolibarr.org&sz=128",
+    };
+  }
+
+  if (value.includes("wazuh")) {
+    return {
+      label: "Wazuh",
+      src: "https://www.google.com/s2/favicons?domain=wazuh.com&sz=128",
+    };
+  }
+
+  if (value.includes("iris")) {
+    return {
+      label: "DFIR-IRIS",
+      src: "https://n8niostorageaccount.blob.core.windows.net/n8nio-strapi-blobs-prod/assets/iris_dfir_52f74857fd.png",
+    };
+  }
+
+  if (value.includes("misp")) {
+    return {
+      label: "MISP",
+      src: "https://www.google.com/s2/favicons?domain=misp-project.org&sz=128",
+    };
+  }
+
+  if (value.includes("kali")) {
+    return {
+      label: "Kali Linux",
+      src: "https://www.google.com/s2/favicons?domain=kali.org&sz=128",
+    };
+  }
+
+  if (value.includes("windows") || osFamily?.toLowerCase() === "windows") {
+    return {
+      label: "Windows",
+      src: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/Windows_logo_and_wordmark_-_2021.svg/1920px-Windows_logo_and_wordmark_-_2021.svg.png",
+    };
+  }
+
+  if (value.includes("victim") || osFamily?.toLowerCase() === "ubuntu") {
+    return {
+      label: "Ubuntu",
+      src: "https://cdn.simpleicons.org/ubuntu/E95420",
+    };
+  }
+
+  return null;
+}
+
+function getLogoFallbackLabel(hint: string) {
+  const cleaned = hint
+    .split(/[\s-_]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+  return cleaned || "VM";
+}
+
+function IconBase({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function ExternalLinkIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M14 5.5h4.5V10" />
+      <path d="M10 14 18.5 5.5" />
+      <path d="M18.5 13v4a1.5 1.5 0 0 1-1.5 1.5H7a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 7 5.5h4" />
+    </IconBase>
+  );
+}
+
+function PlayIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M8 6.5v11l8-5.5-8-5.5Z" />
+    </IconBase>
+  );
+}
+
+function StopIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <rect x="7.5" y="7.5" width="9" height="9" rx="1.5" />
+    </IconBase>
+  );
+}
+
+function TerminalIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="m6.5 8.5 3 3-3 3" />
+      <path d="M11.5 15.5h6" />
+      <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+    </IconBase>
+  );
+}
+
+function SettingsIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M12 8.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Z" />
+      <path d="M4.5 13.25v-2.5l2-0.5c0.18-0.54 0.4-1.04 0.68-1.5L6 6.9l1.77-1.77 1.84 1.18c0.46-0.28 0.96-0.5 1.5-0.68l0.5-2h2.5l0.5 2c0.54 0.18 1.04 0.4 1.5 0.68l1.84-1.18L18 6.9l-1.18 1.84c0.28 0.46 0.5 0.96 0.68 1.5l2 0.5v2.5l-2 0.5c-0.18 0.54-0.4 1.04-0.68 1.5L18 17.1l-1.77 1.77-1.84-1.18c-0.46 0.28-0.96 0.5-1.5 0.68l-0.5 2h-2.5l-0.5-2c-0.54-0.18-1.04-0.4-1.5-0.68l-1.84 1.18L6 17.1l1.18-1.84a6.7 6.7 0 0 1-.68-1.5l-2-.5Z" />
+    </IconBase>
+  );
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M20 11a8 8 0 0 0-14.5-4.5" />
+      <path d="M4 4v4.5h4.5" />
+      <path d="M4 13a8 8 0 0 0 14.5 4.5" />
+      <path d="M20 20v-4.5h-4.5" />
+    </IconBase>
+  );
+}
+
+function ShieldIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M12 3.5 5.5 6v5.2c0 4.26 2.72 7.95 6.5 9.3 3.78-1.35 6.5-5.04 6.5-9.3V6L12 3.5Z" />
+      <path d="m9.5 12 1.75 1.75L14.75 10" />
+    </IconBase>
+  );
+}
+
+function FeedIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M5 18.5a1.5 1.5 0 1 0 0.01 0" />
+      <path d="M5 11.5a7 7 0 0 1 7 7" />
+      <path d="M5 6.5c6.63 0 12 5.37 12 12" />
+    </IconBase>
+  );
+}
+
+function SpinnerIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={`${className ?? ""} animate-spin`}>
+      <path d="M12 4a8 8 0 1 1-5.66 2.34" />
+    </IconBase>
+  );
+}
+
 
 function formatRelativeDate(value: string) {
   const date = new Date(value);
@@ -1543,6 +2829,28 @@ function formatRelativeDate(value: string) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatNewsRelative(value: string) {
+  const date = new Date(value);
+  const deltaMs = Date.now() - date.getTime();
+
+  if (deltaMs < 60_000) {
+    return "about a minute ago";
+  }
+
+  if (deltaMs < 3_600_000) {
+    return `about ${Math.max(1, Math.floor(deltaMs / 60_000))} min ago`;
+  }
+
+  if (deltaMs < 86_400_000) {
+    return `about ${Math.floor(deltaMs / 3_600_000)} hour${deltaMs >= 7_200_000 ? "s" : ""} ago`;
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "2-digit",
   });
 }
 
@@ -1635,4 +2943,140 @@ function getHeatCellTone(value: number) {
   }
 
   return "bg-cyan-300/70";
+}
+
+function getStatTrackTone(tone: "neutral" | "success" | "warning" | "info" | "danger") {
+  if (tone === "info") {
+    return "bg-cyan-500/10";
+  }
+
+  if (tone === "success") {
+    return "bg-emerald-500/10";
+  }
+
+  if (tone === "warning") {
+    return "bg-amber-500/10";
+  }
+
+  if (tone === "danger") {
+    return "bg-rose-500/10";
+  }
+
+  return "bg-white/5";
+}
+
+function getStatFillTone(tone: "neutral" | "success" | "warning" | "info" | "danger") {
+  if (tone === "info") {
+    return "bg-cyan-300";
+  }
+
+  if (tone === "success") {
+    return "bg-emerald-300";
+  }
+
+  if (tone === "warning") {
+    return "bg-amber-300";
+  }
+
+  if (tone === "danger") {
+    return "bg-rose-300";
+  }
+
+  return "bg-slate-300";
+}
+
+function getSparkTrackTone(tone: "neutral" | "success" | "warning" | "info" | "danger") {
+  if (tone === "info") {
+    return "bg-cyan-500/8";
+  }
+
+  if (tone === "success") {
+    return "bg-emerald-500/8";
+  }
+
+  if (tone === "warning") {
+    return "bg-amber-500/8";
+  }
+
+  if (tone === "danger") {
+    return "bg-rose-500/8";
+  }
+
+  return "bg-white/5";
+}
+
+function getSparkFillTone(tone: "neutral" | "success" | "warning" | "info" | "danger") {
+  if (tone === "info") {
+    return "bg-gradient-to-t from-cyan-400/55 to-cyan-300";
+  }
+
+  if (tone === "success") {
+    return "bg-gradient-to-t from-emerald-400/55 to-emerald-300";
+  }
+
+  if (tone === "warning") {
+    return "bg-gradient-to-t from-amber-400/55 to-amber-300";
+  }
+
+  if (tone === "danger") {
+    return "bg-gradient-to-t from-rose-400/55 to-rose-300";
+  }
+
+  return "bg-gradient-to-t from-slate-400/40 to-slate-200";
+}
+
+function buildMetricSparkline(value: number, maxValue: number) {
+  const ratio = maxValue <= 0 ? 0 : Math.min(Math.max(value / maxValue, 0), 1);
+  const base = [0.24, 0.34, 0.48, 0.4, 0.58, 0.52, 0.68, 0.6];
+
+  return base.map((seed, index) => {
+    const scaled = 14 + ratio * 62 + seed * 18 + index * 1.5;
+    return Math.min(100, Math.round(scaled));
+  });
+}
+
+function buildJobTrend(
+  jobs: Array<{ createdAt: string; type?: string }>,
+  buckets: number,
+) {
+  const cells = Array.from({ length: buckets }, (_, index) => ({
+    label: `${index}h`,
+    start: 0,
+    stop: 0,
+    update: 0,
+    other: 0,
+    total: 0,
+  }));
+  const now = Date.now();
+
+  jobs.forEach((job) => {
+    const deltaHours = Math.floor((now - new Date(job.createdAt).getTime()) / 3_600_000);
+    if (deltaHours < 0 || deltaHours >= buckets) {
+      return;
+    }
+
+    const bucketIndex = buckets - 1 - deltaHours;
+    const type = "type" in job && typeof job.type === "string" ? job.type : "";
+
+    if (type === "VM_START") {
+      cells[bucketIndex].start += 1;
+    } else if (type === "VM_STOP") {
+      cells[bucketIndex].stop += 1;
+    } else if (type === "VM_OS_UPDATE") {
+      cells[bucketIndex].update += 1;
+    } else {
+      cells[bucketIndex].other += 1;
+    }
+
+    cells[bucketIndex].total += 1;
+  });
+
+  return cells.map((cell, index) => ({
+    label: index === cells.length - 1 ? "now" : `${buckets - 1 - index}h`,
+    start: cell.start,
+    stop: cell.stop,
+    update: cell.update,
+    other: cell.other,
+    total: cell.total,
+  }));
 }

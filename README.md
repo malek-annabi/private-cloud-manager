@@ -21,6 +21,7 @@ It combines:
 - Per-VM `last online` and `last SSH login` activity indicators
 - Ubuntu-aware server update action with OS version, `last updated`, and reboot-required visibility
 - On-demand security change feed with kernel/core package highlights before patching
+- Frontend-to-backend API traffic telemetry chart for live operator activity volume
 - Automatic OS metadata refresh on interactive SSH connect
 - Job-based start and stop orchestration with logs and timestamps
 - Audit view for operator actions and API activity
@@ -29,6 +30,8 @@ It combines:
 - Lab preset buttons for Blue Team, Red Team, Purple Team, and WG-VPN
 - Multi-tab browser SSH workspace with same-VM parallel tabs
 - Auto boot-and-connect flow for powered-off VMs
+- Clickable reboot-required badge with soft/hard reboot actions
+- Cyber news feed with modal story view and curated RSS aggregation
 - OpenClaw integration on top of the same backend used by the UI
 
 ## Why I Built It
@@ -73,6 +76,7 @@ Responsibilities:
 - display VM inventory and live power state
 - expose token-gated access to the operator UI
 - show jobs, logs, and audit activity
+- show job volume and API traffic telemetry
 - let operators update SSH connection details
 - trigger managed Ubuntu server updates
 - refresh OS family, version, and reboot-needed state on SSH connect
@@ -89,6 +93,7 @@ Responsibilities:
 - execute VMware operations through `vmrun`
 - run managed Ubuntu package update jobs
 - refresh remote OS metadata on successful interactive SSH login
+- expose lightweight in-memory API traffic metrics for dashboard charts
 - process background job handlers
 - expose interactive SSH sessions over WebSocket
 - record audit events and VM activity timestamps
@@ -104,6 +109,7 @@ OpenClaw plugin that exposes the backend as tools:
 - `pcm_get_job_status`
 - `pcm_update_vm`
 - `pcm_get_update_feed`
+- `pcm_rotate_security_updates`
 - `pcm_fire_lab`
 - `pcm_stop_lab`
 
@@ -208,6 +214,7 @@ Important backend notes:
 - API auth uses a bearer token
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
+- the backend also exposes lightweight API traffic metrics for the dashboard
 - Ubuntu VMs can be updated through a managed job instead of ad hoc SSH commands
 - Ubuntu VMs can expose an on-demand security change feed that highlights kernel and other critical package updates before patching
 - interactive SSH logins refresh `lastSshLoginAt`, OS family, OS version, and reboot-required state
@@ -227,6 +234,13 @@ http://127.0.0.1:5173
 ```
 
 The frontend asks for the backend token at login and stores it in the browser for the current operator session.
+
+The dashboard now also includes:
+
+- compact fleet metric cards
+- Chart.js-based job volume and API traffic charts
+- a cyber news feed with story modal drill-down
+- a retractable sidebar for denser operator workflows
 
 ### Ollama
 
@@ -326,6 +340,7 @@ Add the PCM tools to the OpenClaw agent allowlist:
   "pcm_get_job_status",
   "pcm_update_vm",
   "pcm_get_update_feed",
+  "pcm_rotate_security_updates",
   "pcm_fire_lab",
   "pcm_stop_lab"
 ]
@@ -363,6 +378,7 @@ These files do not make the tools work, but they improve consistency and reduce 
 - `Use pcm_get_job_status with a job id returned by the backend.`
 - `Use pcm_update_vm with vmId "ubuntu-web". Do not use exec.`
 - `Use pcm_get_update_feed with vmId "ubuntu-web" and mode "security". Do not use exec.`
+- `Use pcm_rotate_security_updates. Do not use exec.`
 - `Use pcm_fire_lab with lab "blue_team". Do not use exec.`
 - `Use pcm_stop_lab with lab "wg_vpn" and includeGateway false. Do not use exec.`
 
@@ -407,3 +423,4 @@ The goal is to contribute something practical to the community: a concrete examp
 - approval flows for sensitive actions
 - multi-host support
 - more OpenClaw tools and operational workflows
+- a real-time world map for attack telemetry focused on lab VMs and especially honeypot activity

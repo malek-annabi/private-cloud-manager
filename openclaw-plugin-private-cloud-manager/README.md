@@ -11,6 +11,10 @@ This plugin lets OpenClaw call the existing private-cloud-manager backend as a s
 - `pcm_get_job_status`
 - `pcm_update_vm`
 - `pcm_get_update_feed`
+- `pcm_refresh_vm_state`
+- `pcm_reboot_vm`
+- `pcm_get_traffic_metrics`
+- `pcm_rotate_security_updates`
 - `pcm_fire_lab`
 - `pcm_stop_lab`
 
@@ -22,6 +26,9 @@ These tools call the backend routes that already exist today:
 - `POST /api/jobs/ssh`
 - `GET /api/jobs/:id`
 - `POST /api/jobs/update-vm`
+- `POST /api/vms/:id/refresh-state`
+- `POST /api/jobs/reboot-vm`
+- `GET /api/metrics/traffic`
 
 ## Suggested OpenClaw config
 
@@ -79,6 +86,10 @@ Also allow the individual PCM tools for the agent that should use them:
             "pcm_get_job_status",
             "pcm_update_vm",
             "pcm_get_update_feed",
+            "pcm_refresh_vm_state",
+            "pcm_reboot_vm",
+            "pcm_get_traffic_metrics",
+            "pcm_rotate_security_updates",
             "pcm_fire_lab",
             "pcm_stop_lab"
           ]
@@ -158,6 +169,10 @@ These files improve consistency, but they are not what makes the plugin function
 - `pcm_start_vm` and `pcm_stop_vm` create normal backend jobs, so the dashboard and OpenClaw stay in sync.
 - `pcm_update_vm` queues a managed Ubuntu server update job through the same backend job and audit flow.
 - `pcm_get_update_feed` retrieves an on-demand Ubuntu package change feed with security, kernel, and other critical-package highlights before patching.
+- `pcm_refresh_vm_state` pulls live VM guest metadata back into the control plane, which is useful after reboots or guest-side changes.
+- `pcm_reboot_vm` queues a soft or hard reboot job through the same backend controls as the UI.
+- `pcm_get_traffic_metrics` exposes the dashboard's frontend/backend API traffic telemetry to OpenClaw.
+- `pcm_rotate_security_updates` uses that feed as a gate and queues only the safer security-only patch jobs, while holding VMs that show critical or kernel-class changes.
 - `pcm_fire_lab` queues the first lab presets: Blue Team, Red Team, Purple Team, and WG-VPN.
 - `pcm_stop_lab` queues lab shutdowns and can optionally include `FG-VM` through an explicit critical-infrastructure override.
 - If you later add snapshot, release, cancel, audit, or live terminal tools, this plugin is the right place to expose them.
