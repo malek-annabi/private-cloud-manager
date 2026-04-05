@@ -28,7 +28,11 @@ export const startVM = (vmId: string) =>
 
 export const stopVM = (
   vmId: string,
-  options?: { overrideCriticalInfrastructure?: boolean },
+  options?: {
+    overrideCriticalInfrastructure?: boolean;
+    stopMode?: "soft" | "hard";
+    allowHardStopFallback?: boolean;
+  },
 ) => api.post("/jobs/stop-vm", { vmId, ...options });
 
 export const rebootVM = (

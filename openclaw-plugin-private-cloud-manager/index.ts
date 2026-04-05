@@ -418,10 +418,21 @@ async function queueStartVm(ctx: any, vmId: string) {
   });
 }
 
-async function queueStopVm(ctx: any, vmId: string, overrideCriticalInfrastructure = false) {
+async function queueStopVm(
+  ctx: any,
+  vmId: string,
+  overrideCriticalInfrastructure = false,
+  stopMode: "soft" | "hard" = "soft",
+  allowHardStopFallback = false
+) {
   return apiRequest(ctx, "/jobs/stop-vm", {
     method: "POST",
-    body: JSON.stringify({ vmId, overrideCriticalInfrastructure }),
+    body: JSON.stringify({
+      vmId,
+      overrideCriticalInfrastructure,
+      stopMode,
+      allowHardStopFallback,
+    }),
   });
 }
 
@@ -500,15 +511,25 @@ async function executeStopLab(
       continue;
     }
 
-    await queueStopVm(ctx, vmId, false);
+    await queueStopVm(ctx, vmId, false, "soft", false);
     queued.push(vmId);
   }
 
   if (params.includeGateway) {
     const gatewayVm = vms.find((vm: any) => vm.id === CRITICAL_GATEWAY_VM_ID);
     if (gatewayVm?.powerState === "ON") {
-      await queueStopVm(ctx, CRITICAL_GATEWAY_VM_ID, true);
-      queued.push(`${CRITICAL_GATEWAY_VM_ID} (override)`);
+      await queueStopVm(
+        ctx,
+        CRITICAL_GATEWAY_VM_ID,
+        true,
+        "soft",
+        Boolean(params.allowGatewayHardStopFallback)
+      );
+      queued.push(
+        `${CRITICAL_GATEWAY_VM_ID} (override, soft stop${
+          params.allowGatewayHardStopFallback ? " with hard-stop fallback" : ""
+        })`
+      );
     } else {
       skipped.push(`${CRITICAL_GATEWAY_VM_ID} (already stopped)`);
     }
@@ -846,6 +867,11 @@ const privateCloudManagerPlugin = {
             includeGateway: {
               type: "boolean",
               description: "If true, also stop FG-VM after the lab VMs stop.",
+            },
+            allowGatewayHardStopFallback: {
+              type: "boolean",
+              description:
+                "If true, try a soft stop first and fall back to a hard stop only if FG-VM refuses to shut down gracefully.",
             },
           },
           required: ["lab"],

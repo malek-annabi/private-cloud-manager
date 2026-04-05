@@ -22,7 +22,24 @@ export async function handleVMJob(job: any) {
       break;
 
     case "VM_STOP":
-      await vmStop(vm.vmxPath);
+      if (payload.stopMode === "hard") {
+        await vmStop(vm.vmxPath, "hard");
+        break;
+      }
+
+      try {
+        await vmStop(vm.vmxPath, "soft");
+      } catch (error) {
+        if (!payload.allowHardStopFallback) {
+          throw error;
+        }
+
+        await logJob(
+          job.id,
+          "Soft stop failed. Falling back to VMware hard stop because allowHardStopFallback was explicitly enabled.",
+        );
+        await vmStop(vm.vmxPath, "hard");
+      }
       break;
 
     case "VM_REBOOT":

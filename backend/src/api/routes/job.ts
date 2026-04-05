@@ -19,6 +19,8 @@ const router = Router();
 const startStopSchema = z.object({
   vmId: z.string().min(1),
   overrideCriticalInfrastructure: z.boolean().optional(),
+  stopMode: z.enum(["soft", "hard"]).optional(),
+  allowHardStopFallback: z.boolean().optional(),
 });
 
 const snapshotSchema = z.object({

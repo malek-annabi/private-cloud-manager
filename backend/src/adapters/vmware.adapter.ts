@@ -11,8 +11,8 @@ export async function vmStart(vmxPath: string) {
   return execFileAsync(VMRUN_PATH, ["start", vmxPath, "nogui"]);
 }
 
-export async function vmStop(vmxPath: string) {
-  return execFileAsync(VMRUN_PATH, ["stop", vmxPath, "soft"]);
+export async function vmStop(vmxPath: string, mode: "soft" | "hard" = "soft") {
+  return execFileAsync(VMRUN_PATH, ["stop", vmxPath, mode]);
 }
 
 export async function vmReboot(vmxPath: string, mode: "soft" | "hard" = "soft") {

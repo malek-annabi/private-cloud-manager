@@ -139,6 +139,7 @@ export default function VMs() {
   const [runningLabActionId, setRunningLabActionId] = useState<string | null>(null);
   const [stopLabPreset, setStopLabPreset] = useState<LabPreset | null>(null);
   const [includeGatewayOnStop, setIncludeGatewayOnStop] = useState(false);
+  const [allowGatewayHardStopFallback, setAllowGatewayHardStopFallback] = useState(false);
   const [updateFeedVmId, setUpdateFeedVmId] = useState<string | null>(null);
   const [updateFeed, setUpdateFeed] = useState<VmUpdateFeedRecord | null>(null);
   const [loadingUpdateFeedFor, setLoadingUpdateFeedFor] = useState<string | null>(null);
@@ -450,6 +451,8 @@ export default function VMs() {
         if (gatewayVm?.powerState === "ON") {
           await stopVM(CRITICAL_GATEWAY_VM_ID, {
             overrideCriticalInfrastructure: true,
+            stopMode: "soft",
+            allowHardStopFallback: allowGatewayHardStopFallback,
           });
         }
       }
@@ -460,6 +463,7 @@ export default function VMs() {
       setRunningLabActionId(null);
       setStopLabPreset(null);
       setIncludeGatewayOnStop(false);
+      setAllowGatewayHardStopFallback(false);
     }
   };
 
@@ -919,6 +923,7 @@ export default function VMs() {
                       onClick={() => {
                         setStopLabPreset(preset);
                         setIncludeGatewayOnStop(false);
+                        setAllowGatewayHardStopFallback(false);
                       }}
                     >
                       {runningLabActionId === `stop:${preset.id}` ? "Stopping..." : preset.stopLabel}
@@ -1773,6 +1778,24 @@ export default function VMs() {
                 <p className="text-xs text-amber-200/90">
                   If checked, the lab may lose internal communication and internet access until FG-VM is started again.
                 </p>
+                {includeGatewayOnStop ? (
+                  <label className="flex items-start gap-3 border-t border-white/10 pt-3">
+                    <input
+                      type="checkbox"
+                      checked={allowGatewayHardStopFallback}
+                      onChange={(event) => setAllowGatewayHardStopFallback(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
+                    />
+                    <span>
+                      If the soft shutdown fails, allow a <span className="text-rose-200">hard-stop fallback</span> for <span className="text-white">FG-VM</span>.
+                    </span>
+                  </label>
+                ) : null}
+                {includeGatewayOnStop && allowGatewayHardStopFallback ? (
+                  <p className="text-xs text-rose-200/90">
+                    Use this only when you intentionally accept the appliance risk. Soft stop stays the first attempt.
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap justify-end gap-3">
@@ -1781,6 +1804,7 @@ export default function VMs() {
                   onClick={() => {
                     setStopLabPreset(null);
                     setIncludeGatewayOnStop(false);
+                    setAllowGatewayHardStopFallback(false);
                   }}
                 >
                   Cancel
