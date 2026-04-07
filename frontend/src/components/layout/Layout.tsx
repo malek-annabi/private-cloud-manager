@@ -11,7 +11,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         onToggle={() => setIsSidebarCollapsed((current) => !current)}
       />
 
-      <main className="relative h-screen flex-1 overflow-y-auto">
+      <main className="relative h-screen flex-1 overflow-y-auto scroll-smooth">
         <div className="absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] bg-[size:36px_36px] opacity-30" />
         <div className="relative">
           {children}

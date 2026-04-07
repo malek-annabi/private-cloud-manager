@@ -17,7 +17,16 @@ import { useVMs } from "../hooks/useVMs";
 import { useJobs } from "../hooks/useJobs";
 import { useCyberNews } from "../hooks/useCyberNews";
 import { useTrafficMetrics } from "../hooks/useTrafficMetrics";
+import { useLabStacks } from "../hooks/useLabStacks";
 import type { CyberNewsItem } from "../api/news";
+import {
+  createLabStack,
+  deleteLabStack,
+  updateLabStack,
+  type LabStack,
+  type LabStackPayload,
+  type LabStackTone,
+} from "../api/labs";
 import {
   checkVmSshReady,
   createVm,
@@ -46,16 +55,6 @@ ChartJS.register(
   Legend,
   Filler,
 );
-
-type LabPreset = {
-  id: "blue-team" | "red-team" | "purple-team" | "wg-vpn";
-  name: string;
-  fireLabel: string;
-  stopLabel: string;
-  description: string;
-  vmIds: string[];
-  tone: "info" | "danger" | "neutral" | "success";
-};
 
 type SecurityRotationSummary = {
   candidateCount: number;
@@ -126,44 +125,24 @@ const DEFAULT_VM_SETTINGS_DRAFT = {
   sshPassword: "",
 };
 
-const LAB_PRESETS: LabPreset[] = [
-  {
-    id: "blue-team",
-    name: "Blue Team",
-    fireLabel: "Fire Blue Team Lab",
-    stopLabel: "Stop Blue Team Lab",
-    description: "Starts FG-VM if needed, then Wazuh, IRIS, and MISP.",
-    vmIds: ["wazuh", "iris", "misp"],
-    tone: "info",
-  },
-  {
-    id: "red-team",
-    name: "Red Team",
-    fireLabel: "Fire Red Team Lab",
-    stopLabel: "Stop Red Team Lab",
-    description: "Starts FG-VM if needed, then Kali and the victim node.",
-    vmIds: ["kali-01", "ubuntu-server-victim"],
-    tone: "danger",
-  },
-  {
-    id: "purple-team",
-    name: "Purple Team",
-    fireLabel: "Fire Purple Team Lab",
-    stopLabel: "Stop Purple Team Lab",
-    description: "Starts FG-VM if needed, then Wazuh, IRIS, Kali, and the victim node.",
-    vmIds: ["wazuh", "iris", "kali-01", "ubuntu-server-victim"],
-    tone: "neutral",
-  },
-  {
-    id: "wg-vpn",
-    name: "WG-VPN",
-    fireLabel: "Fire WG-VPN",
-    stopLabel: "Stop WG-VPN",
-    description: "Starts FG-VM if needed, then WireGuard.",
-    vmIds: ["wireguard"],
-    tone: "success",
-  },
+const LAB_TONE_OPTIONS: Array<{ value: LabStackTone; label: string }> = [
+  { value: "info", label: "Blue / info" },
+  { value: "danger", label: "Red / offensive" },
+  { value: "neutral", label: "Purple / mixed" },
+  { value: "success", label: "Green / service" },
 ];
+
+const DEFAULT_LAB_STACK_DRAFT = {
+  id: "",
+  name: "",
+  fireLabel: "",
+  stopLabel: "",
+  description: "",
+  vmIds: [] as string[],
+  tone: "info" as LabStackTone,
+  gatewayVmId: CRITICAL_GATEWAY_VM_ID,
+  includeGatewayOnStart: true,
+};
 
 export default function VMs() {
   const queryClient = useQueryClient();
@@ -171,6 +150,7 @@ export default function VMs() {
   const { data: jobs = [] } = useJobs();
   const { data: cyberNews, isLoading: isLoadingCyberNews } = useCyberNews(40);
   const { data: trafficMetrics } = useTrafficMetrics(12);
+  const { data: labStacks = [] } = useLabStacks();
   const [sshSessions, setSshSessions] = useState<Array<{ id: string; vmId: string }>>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -198,9 +178,14 @@ export default function VMs() {
   const [savingConnectionFor, setSavingConnectionFor] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [runningLabActionId, setRunningLabActionId] = useState<string | null>(null);
-  const [stopLabPreset, setStopLabPreset] = useState<LabPreset | null>(null);
+  const [stopLabPreset, setStopLabPreset] = useState<LabStack | null>(null);
   const [includeGatewayOnStop, setIncludeGatewayOnStop] = useState(false);
   const [allowGatewayHardStopFallback, setAllowGatewayHardStopFallback] = useState(false);
+  const [editingLabStackId, setEditingLabStackId] = useState<string | "new" | null>(null);
+  const [labStackDraft, setLabStackDraft] = useState(DEFAULT_LAB_STACK_DRAFT);
+  const [labStackError, setLabStackError] = useState("");
+  const [isSavingLabStack, setIsSavingLabStack] = useState(false);
+  const [isDeletingLabStack, setIsDeletingLabStack] = useState(false);
   const [updateFeedVmId, setUpdateFeedVmId] = useState<string | null>(null);
   const [updateFeed, setUpdateFeed] = useState<VmUpdateFeedRecord | null>(null);
   const [loadingUpdateFeedFor, setLoadingUpdateFeedFor] = useState<string | null>(null);
@@ -300,7 +285,7 @@ export default function VMs() {
   }, [data, searchTerm]);
   const labStatuses = useMemo(
     () =>
-      LAB_PRESETS.map((preset) => {
+      labStacks.map((preset) => {
         const members = preset.vmIds
           .map((vmId) => data.find((vm) => vm.id === vmId))
           .filter((vm): vm is VmRecord => Boolean(vm));
@@ -313,7 +298,7 @@ export default function VMs() {
           allRunning: members.length === preset.vmIds.length && runningCount === preset.vmIds.length,
         };
       }),
-    [data],
+    [data, labStacks],
   );
 
   useEffect(() => {
@@ -605,13 +590,121 @@ export default function VMs() {
     }
   };
 
-  const runLabStart = async (preset: LabPreset) => {
+  const openLabStackEditor = (lab?: LabStack) => {
+    setLabStackError("");
+
+    if (!lab) {
+      setEditingLabStackId("new");
+      setLabStackDraft(DEFAULT_LAB_STACK_DRAFT);
+      return;
+    }
+
+    setEditingLabStackId(lab.id);
+    setLabStackDraft({
+      id: lab.id,
+      name: lab.name,
+      fireLabel: lab.fireLabel,
+      stopLabel: lab.stopLabel,
+      description: lab.description,
+      vmIds: lab.vmIds,
+      tone: lab.tone,
+      gatewayVmId: lab.gatewayVmId ?? "",
+      includeGatewayOnStart: lab.includeGatewayOnStart,
+    });
+  };
+
+  const closeLabStackEditor = () => {
+    setEditingLabStackId(null);
+    setLabStackDraft(DEFAULT_LAB_STACK_DRAFT);
+    setLabStackError("");
+  };
+
+  const saveLabStack = async () => {
+    const id = labStackDraft.id.trim();
+    const name = labStackDraft.name.trim();
+    const vmIds = Array.from(new Set(labStackDraft.vmIds));
+
+    if (!id || !name) {
+      setLabStackError("Lab id and name are required.");
+      return;
+    }
+
+    if (vmIds.length === 0) {
+      setLabStackError("Select at least one VM for this lab stack.");
+      return;
+    }
+
+    const payload: LabStackPayload = {
+      id,
+      name,
+      fireLabel: labStackDraft.fireLabel.trim() || `Fire ${name}`,
+      stopLabel: labStackDraft.stopLabel.trim() || `Stop ${name}`,
+      description: labStackDraft.description.trim() || `Starts ${name} lab stack.`,
+      vmIds,
+      tone: labStackDraft.tone,
+      gatewayVmId: labStackDraft.gatewayVmId.trim() || null,
+      includeGatewayOnStart: labStackDraft.includeGatewayOnStart,
+    };
+
+    setIsSavingLabStack(true);
+    setLabStackError("");
+
+    try {
+      if (editingLabStackId === "new") {
+        await createLabStack(payload);
+      } else if (editingLabStackId) {
+        await updateLabStack(editingLabStackId, payload);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["lab-stacks"] });
+      closeLabStackEditor();
+    } catch (error: any) {
+      setLabStackError(
+        error?.response?.data?.error ??
+          error?.message ??
+          "Could not save this lab stack.",
+      );
+    } finally {
+      setIsSavingLabStack(false);
+    }
+  };
+
+  const removeLabStack = async (labId: string) => {
+    setIsDeletingLabStack(true);
+    setLabStackError("");
+
+    try {
+      await deleteLabStack(labId);
+      await queryClient.invalidateQueries({ queryKey: ["lab-stacks"] });
+      closeLabStackEditor();
+    } catch (error: any) {
+      setLabStackError(
+        error?.response?.data?.error ??
+          error?.message ??
+          "Could not delete this lab stack.",
+      );
+    } finally {
+      setIsDeletingLabStack(false);
+    }
+  };
+
+  const toggleLabVm = (vmId: string) => {
+    setLabStackDraft((current) => ({
+      ...current,
+      vmIds: current.vmIds.includes(vmId)
+        ? current.vmIds.filter((candidate) => candidate !== vmId)
+        : [...current.vmIds, vmId],
+    }));
+  };
+
+  const runLabStart = async (preset: LabStack) => {
     setRunningLabActionId(`start:${preset.id}`);
 
     try {
-      const gatewayVm = data.find((vm) => vm.id === CRITICAL_GATEWAY_VM_ID);
-      if (gatewayVm && gatewayVm.powerState !== "ON") {
-        await startVM(CRITICAL_GATEWAY_VM_ID);
+      const gatewayVmId = preset.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID;
+      const gatewayVm = data.find((vm) => vm.id === gatewayVmId);
+      if (preset.includeGatewayOnStart && gatewayVm && gatewayVm.powerState !== "ON") {
+        await startVM(gatewayVmId);
       }
 
       for (const vmId of preset.vmIds) {
@@ -630,7 +723,7 @@ export default function VMs() {
     }
   };
 
-  const runLabStop = async (preset: LabPreset, includeGateway: boolean) => {
+  const runLabStop = async (preset: LabStack, includeGateway: boolean) => {
     setRunningLabActionId(`stop:${preset.id}`);
 
     try {
@@ -644,9 +737,10 @@ export default function VMs() {
       }
 
       if (includeGateway) {
-        const gatewayVm = data.find((vm) => vm.id === CRITICAL_GATEWAY_VM_ID);
+        const gatewayVmId = preset.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID;
+        const gatewayVm = data.find((vm) => vm.id === gatewayVmId);
         if (gatewayVm?.powerState === "ON") {
-          await stopVM(CRITICAL_GATEWAY_VM_ID, {
+          await stopVM(gatewayVmId, {
             overrideCriticalInfrastructure: true,
             stopMode: "soft",
             allowHardStopFallback: allowGatewayHardStopFallback,
@@ -820,6 +914,18 @@ export default function VMs() {
     });
   };
 
+  const scrollToVmSection = (href: string) => {
+    const target = document.querySelector(href);
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
   const saveConnection = async (vm: VmRecord) => {
     const sshHost = connectionDraft.sshHost.trim();
     const sshUser = connectionDraft.sshUser.trim();
@@ -888,6 +994,10 @@ export default function VMs() {
           <a
             key={link.href}
             href={link.href}
+            onClick={(event) => {
+              event.preventDefault();
+              scrollToVmSection(link.href);
+            }}
             className="rounded-full px-4 py-2 text-xs font-medium uppercase tracking-[0.2em] text-slate-400 transition hover:bg-white/10 hover:text-white"
           >
             {link.label}
@@ -1094,16 +1204,23 @@ export default function VMs() {
       <Card id="lab-runbooks" className="scroll-mt-28 border-white/10 bg-white/5">
         <div className="space-y-5">
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
-              Runbooks
-            </p>
-            <h2 className="text-2xl font-semibold text-white">
-              Fire or stop a lab in one move
-            </h2>
-            <p className="max-w-3xl text-sm text-slate-300">
-              These presets treat <span className="text-white">FG-VM</span> as the backbone gateway:
-              fire actions start it first if needed, and stop actions let you decide whether to power it off with the lab.
-            </p>
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                  Runbooks
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold text-white">
+                  Fire or stop a lab in one move
+                </h2>
+                <p className="mt-2 max-w-3xl text-sm text-slate-300">
+                  Create reusable VM stacks for your labs. Each stack can optionally start a gateway first,
+                  then fire or stop the selected VMs in one operator action.
+                </p>
+              </div>
+              <Button variant="secondary" onClick={() => openLabStackEditor()}>
+                Add lab stack
+              </Button>
+            </div>
           </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
@@ -1115,14 +1232,26 @@ export default function VMs() {
                       <h3 className="text-lg font-semibold text-white">{preset.name}</h3>
                       <p className="mt-1 text-sm text-slate-400">{preset.description}</p>
                     </div>
-                    <Badge
-                      label={`${runningCount}/${totalCount} running`}
-                      tone={allRunning ? "success" : "info"}
-                    />
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        label={`${runningCount}/${totalCount} running`}
+                        tone={allRunning ? "success" : "info"}
+                      />
+                      <Button
+                        variant="ghost"
+                        onClick={() => openLabStackEditor(preset)}
+                        title={`Edit ${preset.name}`}
+                        className="px-3"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Badge label="FG-VM dependency" tone="warning" />
+                    {preset.gatewayVmId ? (
+                      <Badge label={`${preset.gatewayVmId} dependency`} tone="warning" />
+                    ) : null}
                     {preset.vmIds.map((vmId) => (
                       <Badge key={vmId} label={vmId} tone="neutral" />
                     ))}
@@ -1150,7 +1279,7 @@ export default function VMs() {
 
                   <div className="flex items-end justify-between pt-1">
                     <div className="flex items-center gap-2">
-                      <LogoStrip hints={[CRITICAL_GATEWAY_VM_ID, ...preset.vmIds]} />
+                      <LogoStrip hints={[preset.gatewayVmId, ...preset.vmIds].filter(Boolean) as string[]} />
                     </div>
                     <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">
                       lab preset
@@ -2437,6 +2566,208 @@ export default function VMs() {
         </div>
       )}
 
+      {editingLabStackId ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 px-4 py-8 backdrop-blur-sm">
+          <Card className="max-h-[90vh] w-full max-w-4xl overflow-y-auto border-white/10 bg-slate-950">
+            <div className="space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Lab stack
+                  </p>
+                  <h2 className="text-2xl font-semibold text-white">
+                    {editingLabStackId === "new" ? "Create lab stack" : `Edit ${labStackDraft.name}`}
+                  </h2>
+                  <p className="max-w-2xl text-sm leading-6 text-slate-400">
+                    Pick the VMs that belong to this lab and choose whether a gateway VM should be started first.
+                  </p>
+                </div>
+                <Button variant="ghost" onClick={closeLabStackEditor}>
+                  Close
+                </Button>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Lab id</span>
+                  <input
+                    value={labStackDraft.id}
+                    disabled={editingLabStackId !== "new"}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, id: event.target.value }))
+                    }
+                    placeholder="blue-team"
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-60 focus:border-teal-400"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Name</span>
+                  <input
+                    value={labStackDraft.name}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, name: event.target.value }))
+                    }
+                    placeholder="Blue Team"
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Fire label</span>
+                  <input
+                    value={labStackDraft.fireLabel}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, fireLabel: event.target.value }))
+                    }
+                    placeholder="Fire Blue Team Lab"
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Stop label</span>
+                  <input
+                    value={labStackDraft.stopLabel}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, stopLabel: event.target.value }))
+                    }
+                    placeholder="Stop Blue Team Lab"
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  />
+                </label>
+
+                <label className="space-y-2 lg:col-span-2">
+                  <span className="text-sm text-slate-300">Description</span>
+                  <textarea
+                    value={labStackDraft.description}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, description: event.target.value }))
+                    }
+                    placeholder="Starts FG-VM if needed, then the selected lab VMs."
+                    className="min-h-24 w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Tone</span>
+                  <select
+                    value={labStackDraft.tone}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({
+                        ...current,
+                        tone: event.target.value as LabStackTone,
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  >
+                    {LAB_TONE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm text-slate-300">Gateway VM</span>
+                  <select
+                    value={labStackDraft.gatewayVmId}
+                    onChange={(event) =>
+                      setLabStackDraft((current) => ({ ...current, gatewayVmId: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                  >
+                    <option value="">No gateway dependency</option>
+                    {data.map((vm) => (
+                      <option key={vm.id} value={vm.id}>
+                        {vm.name} ({vm.id})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={labStackDraft.includeGatewayOnStart}
+                  onChange={(event) =>
+                    setLabStackDraft((current) => ({
+                      ...current,
+                      includeGatewayOnStart: event.target.checked,
+                    }))
+                  }
+                  className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
+                />
+                <span>Start the gateway VM first when firing this lab stack.</span>
+              </label>
+
+              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-white">Stack members</h3>
+                  <p className="mt-1 text-xs text-slate-400">
+                    These are the VMs that fire/stop with this lab. The gateway is controlled separately.
+                  </p>
+                </div>
+
+                <div className="grid max-h-72 gap-2 overflow-y-auto pr-2 sm:grid-cols-2">
+                  {data.map((vm) => (
+                    <label
+                      key={vm.id}
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-900/70 px-4 py-3 text-sm text-slate-300"
+                    >
+                      <span>
+                        <span className="font-medium text-white">{vm.name}</span>
+                        <span className="ml-2 text-xs text-slate-500">{vm.id}</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={labStackDraft.vmIds.includes(vm.id)}
+                        onChange={() => toggleLabVm(vm.id)}
+                        className="h-4 w-4 rounded border-white/20 bg-slate-950"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {labStackError ? (
+                <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                  {labStackError}
+                </p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  {editingLabStackId !== "new" ? (
+                    <Button
+                      variant="danger"
+                      disabled={isDeletingLabStack}
+                      onClick={() => void removeLabStack(editingLabStackId)}
+                    >
+                      {isDeletingLabStack ? "Deleting..." : "Delete lab stack"}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap justify-end gap-3">
+                  <Button variant="ghost" onClick={closeLabStackEditor}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={isSavingLabStack}
+                    onClick={() => void saveLabStack()}
+                  >
+                    {isSavingLabStack ? "Saving..." : "Save lab stack"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
       {stopLabPreset && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm">
           <Card className="w-full max-w-2xl border-white/10 bg-slate-950">
@@ -2449,7 +2780,7 @@ export default function VMs() {
                   {stopLabPreset.stopLabel}
                 </h2>
                 <p className="text-sm leading-6 text-slate-400">
-                  {stopLabPreset.name} depends on FG-VM for core lab communication. Choose whether the stop action should also power down the gateway firewall.
+                  {stopLabPreset.name} can optionally stop {stopLabPreset.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID} after the stack VMs shut down.
                 </p>
               </div>
 
@@ -2462,7 +2793,7 @@ export default function VMs() {
                     className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
                   />
                   <span>
-                    Also shut down <span className="text-white">FG-VM</span> after the lab VMs stop.
+                    Also shut down <span className="text-white">{stopLabPreset.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID}</span> after the lab VMs stop.
                   </span>
                 </label>
                 <p className="text-xs text-amber-200/90">
@@ -2477,7 +2808,7 @@ export default function VMs() {
                       className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
                     />
                     <span>
-                      If the soft shutdown fails, allow a <span className="text-rose-200">hard-stop fallback</span> for <span className="text-white">FG-VM</span>.
+                      If the soft shutdown fails, allow a <span className="text-rose-200">hard-stop fallback</span> for <span className="text-white">{stopLabPreset.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID}</span>.
                     </span>
                   </label>
                 ) : null}

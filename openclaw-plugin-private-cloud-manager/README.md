@@ -33,6 +33,7 @@ These tools call the backend routes that already exist today:
 - `POST /api/vms/:id/refresh-state`
 - `POST /api/jobs/reboot-vm`
 - `GET /api/metrics/traffic`
+- `GET /api/labs`
 
 ## Suggested OpenClaw config
 
@@ -181,6 +182,6 @@ These files improve consistency, but they are not what makes the plugin function
 - `pcm_reboot_vm` queues a soft or hard reboot job through the same backend controls as the UI.
 - `pcm_get_traffic_metrics` exposes the dashboard's frontend/backend API traffic telemetry to OpenClaw.
 - `pcm_rotate_security_updates` uses that feed as a gate and queues only the safer security-only patch jobs, while holding VMs that show critical or kernel-class changes.
-- `pcm_fire_lab` queues the first lab presets: Blue Team, Red Team, Purple Team, and WG-VPN.
-- `pcm_stop_lab` queues lab shutdowns and can optionally include `FG-VM` through an explicit critical-infrastructure override.
+- `pcm_fire_lab` reads the current lab stacks from the backend, then queues start actions for the requested lab id or name.
+- `pcm_stop_lab` reads the current lab stacks from the backend, then queues lab shutdowns and can optionally include that lab's gateway VM through an explicit critical-infrastructure override.
 - If you later add snapshot, release, cancel, audit, or live terminal tools, this plugin is the right place to expose them.

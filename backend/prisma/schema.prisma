@@ -78,3 +78,17 @@ model VM {
 
   createdAt   DateTime @default(now())
 }
+
+model LabStack {
+  id                    String   @id
+  name                  String
+  fireLabel             String
+  stopLabel             String
+  description           String
+  vmIds                 String   @default("[]")
+  tone                  String   @default("info")
+  gatewayVmId           String?
+  includeGatewayOnStart Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}

@@ -7,6 +7,7 @@ import jobRoutes from "./api/routes/job";
 import auditRoutes from "./api/routes/audit";
 import newsRoutes from "./api/routes/news";
 import metricsRoutes from "./api/routes/metrics";
+import labRoutes from "./api/routes/lab";
 
 import { authMiddleware } from "./api/middleware/auth";
 import { errorHandler } from "./api/middleware/error.middleware";
@@ -55,6 +56,7 @@ export const createApp = () => {
   app.use("/api/audit", auditRoutes); // /api/audit
   app.use("/api/news", newsRoutes);   // /api/news
   app.use("/api/metrics", metricsRoutes); // /api/metrics
+  app.use("/api/labs", labRoutes); // /api/labs
 
   // ❗ JSON parsing error handler (must be before global handler)
   app.use((err: any, req: any, res: any, next: any) => {

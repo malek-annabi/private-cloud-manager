@@ -3,13 +3,6 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:8000/api";
 const DEFAULT_TIMEOUT_MS = 15000;
 const CRITICAL_GATEWAY_VM_ID = "FG-VM";
 
-const LAB_PRESETS = {
-  blue_team: ["wazuh", "iris", "misp"],
-  red_team: ["kali-01", "ubuntu-server-victim"],
-  purple_team: ["wazuh", "iris", "kali-01", "ubuntu-server-victim"],
-  wg_vpn: ["wireguard"],
-} as const;
-
 function isAptManagedOs(osFamily: string | null | undefined) {
   const normalized = osFamily?.trim().toLowerCase();
   return normalized === "ubuntu" || normalized === "debian" || normalized === "kali";
@@ -528,8 +521,8 @@ async function executeFireLab(
   params: any,
   ctx: any,
 ) {
-  const presetVmIds = LAB_PRESETS[params.lab as keyof typeof LAB_PRESETS];
-  if (!presetVmIds) {
+  const lab = await findLabStack(ctx, params.lab);
+  if (!lab) {
     throw new Error(`Unknown lab preset: ${params.lab}`);
   }
 
@@ -537,15 +530,16 @@ async function executeFireLab(
   const queued: string[] = [];
   const skipped: string[] = [];
 
-  const gatewayVm = vms.find((vm: any) => vm.id === CRITICAL_GATEWAY_VM_ID);
-  if (gatewayVm && gatewayVm.powerState !== "ON") {
-    await queueStartVm(ctx, CRITICAL_GATEWAY_VM_ID);
-    queued.push(CRITICAL_GATEWAY_VM_ID);
+  const gatewayVmId = lab.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID;
+  const gatewayVm = vms.find((vm: any) => vm.id === gatewayVmId);
+  if (lab.includeGatewayOnStart && gatewayVm && gatewayVm.powerState !== "ON") {
+    await queueStartVm(ctx, gatewayVmId);
+    queued.push(gatewayVmId);
   } else if (gatewayVm) {
-    skipped.push(`${CRITICAL_GATEWAY_VM_ID} (already running)`);
+    skipped.push(`${gatewayVmId} (already running)`);
   }
 
-  for (const vmId of presetVmIds) {
+  for (const vmId of lab.vmIds) {
     const vm = vms.find((candidate: any) => candidate.id === vmId);
     if (!vm) {
       skipped.push(`${vmId} (not found)`);
@@ -563,7 +557,7 @@ async function executeFireLab(
 
   return textResult(
     [
-      `Fire lab action queued for ${params.lab}.`,
+      `Fire lab action queued for ${lab.name}.`,
       queued.length ? `queued=${queued.join(", ")}` : "queued=none",
       skipped.length ? `skipped=${skipped.join(", ")}` : null,
     ]
@@ -577,8 +571,8 @@ async function executeStopLab(
   params: any,
   ctx: any,
 ) {
-  const presetVmIds = LAB_PRESETS[params.lab as keyof typeof LAB_PRESETS];
-  if (!presetVmIds) {
+  const lab = await findLabStack(ctx, params.lab);
+  if (!lab) {
     throw new Error(`Unknown lab preset: ${params.lab}`);
   }
 
@@ -586,7 +580,7 @@ async function executeStopLab(
   const queued: string[] = [];
   const skipped: string[] = [];
 
-  for (const vmId of [...presetVmIds].reverse()) {
+  for (const vmId of [...lab.vmIds].reverse()) {
     const vm = vms.find((candidate: any) => candidate.id === vmId);
     if (!vm) {
       skipped.push(`${vmId} (not found)`);
@@ -603,33 +597,48 @@ async function executeStopLab(
   }
 
   if (params.includeGateway) {
-    const gatewayVm = vms.find((vm: any) => vm.id === CRITICAL_GATEWAY_VM_ID);
+    const gatewayVmId = lab.gatewayVmId ?? CRITICAL_GATEWAY_VM_ID;
+    const gatewayVm = vms.find((vm: any) => vm.id === gatewayVmId);
     if (gatewayVm?.powerState === "ON") {
       await queueStopVm(
         ctx,
-        CRITICAL_GATEWAY_VM_ID,
+        gatewayVmId,
         true,
         "soft",
         Boolean(params.allowGatewayHardStopFallback)
       );
       queued.push(
-        `${CRITICAL_GATEWAY_VM_ID} (override, soft stop${
+        `${gatewayVmId} (override, soft stop${
           params.allowGatewayHardStopFallback ? " with hard-stop fallback" : ""
         })`
       );
     } else {
-      skipped.push(`${CRITICAL_GATEWAY_VM_ID} (already stopped)`);
+      skipped.push(`${gatewayVmId} (already stopped)`);
     }
   }
 
   return textResult(
     [
-      `Stop lab action queued for ${params.lab}.`,
+      `Stop lab action queued for ${lab.name}.`,
       queued.length ? `queued=${queued.join(", ")}` : "queued=none",
       skipped.length ? `skipped=${skipped.join(", ")}` : null,
     ]
       .filter(Boolean)
       .join("\n"),
+  );
+}
+
+async function findLabStack(ctx: any, labIdOrName: string) {
+  const labs = await apiRequest(ctx, "/labs");
+  if (!Array.isArray(labs)) {
+    return null;
+  }
+
+  const normalized = String(labIdOrName).trim().toLowerCase();
+  return (
+    labs.find((lab: any) => String(lab.id).toLowerCase() === normalized) ??
+    labs.find((lab: any) => String(lab.name).toLowerCase() === normalized) ??
+    null
   );
 }
 
@@ -1048,8 +1057,8 @@ const privateCloudManagerPlugin = {
           properties: {
             lab: {
               type: "string",
-              enum: ["blue_team", "red_team", "purple_team", "wg_vpn"],
-              description: "The lab preset to start.",
+              description:
+                "The lab stack id or name to start, for example blue-team, Red Team, purple-team, or wg-vpn.",
             },
           },
           required: ["lab"],
@@ -1091,8 +1100,8 @@ const privateCloudManagerPlugin = {
           properties: {
             lab: {
               type: "string",
-              enum: ["blue_team", "red_team", "purple_team", "wg_vpn"],
-              description: "The lab preset to stop.",
+              description:
+                "The lab stack id or name to stop, for example blue-team, Red Team, purple-team, or wg-vpn.",
             },
             includeGateway: {
               type: "boolean",
