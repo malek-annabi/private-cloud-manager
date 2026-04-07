@@ -16,7 +16,7 @@ Today the system provides:
 - job-based lifecycle actions with logs and timestamps
 - audit visibility for actions and API activity
 - a browser-based multi-tab SSH workspace
-- a managed Ubuntu server update workflow with OS version and patch metadata
+- a managed update workflow with OS version and patch metadata for Ubuntu, Debian, Kali, and Windows
 - an on-demand security change feed that surfaces kernel and critical package changes before patching
 - live frontend-to-backend API traffic telemetry in the dashboard
 - automatic OS metadata refresh on interactive SSH connect
@@ -35,6 +35,7 @@ The frontend is built with React, Vite, TypeScript, React Query, React Router, A
 It is responsible for:
 
 - VM inventory and live power-state presentation
+- UI-based VM registration with OS family selection for workflow routing
 - token-gated UI access
 - jobs and audit views
 - editable SSH connection details
@@ -60,6 +61,7 @@ It is responsible for:
 The OpenClaw plugin exposes the backend as explicit tools:
 
 - `pcm_list_vms`
+- `pcm_create_vm`
 - `pcm_start_vm`
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
@@ -122,9 +124,9 @@ The SSH experience evolved from a single embedded terminal into a tabbed operato
 
 This is one of the biggest usability improvements in the project so far.
 
-### Managed Ubuntu Updates
+### Managed Linux and Windows Updates
 
-Because most of the environment runs Ubuntu Server 22.04 or 24.04, the platform now exposes a first-class update operation instead of relying on arbitrary SSH commands. The backend can queue a managed update job, run package maintenance over SSH, detect the current OS version, persist `last updated` metadata, and record whether a reboot is required.
+Because most of the environment runs managed guests such as Ubuntu Server, Debian-family systems, Kali, and Windows, the platform now exposes a first-class update operation instead of relying on arbitrary SSH commands. The backend can queue a managed update job, run package maintenance over SSH, detect the current OS version, persist `last updated` metadata, and record whether a reboot is required.
 
 That keeps patching on the same audited backend path as the rest of the platform.
 
@@ -132,7 +134,7 @@ The platform also refreshes OS family, OS version, and reboot-needed state whene
 
 The reboot-required flag is clickable in the UI and opens a reboot action flow instead of permanently consuming card space with another visible button. That keeps the VM cards cleaner while still exposing both soft and hard reboot paths when needed.
 
-An important safety addition is the on-demand security change feed. Before queuing a patch run, the operator can now inspect pending Ubuntu package changes through the same backend SSH control path and see whether kernel or other core platform packages are involved. That makes a future `rotate_security_updates` workflow much safer than blindly applying every available upgrade.
+An important safety addition is the on-demand security change feed. Before queuing a patch run, the operator can now inspect pending package changes through the same backend SSH control path and see whether kernel, cumulative, servicing-stack, or other core platform packages are involved. Ubuntu can use the richer unattended-upgrade security classification path; Kali and Debian-family guests still get apt package visibility and critical/kernel highlighting where classification is available; Windows uses Windows Update Agent metadata over PowerShell/SSH. That makes a future `rotate_security_updates` workflow much safer than blindly applying every available upgrade.
 
 ### AI Operations Layer
 
@@ -192,7 +194,7 @@ It also demonstrates a practical AI pattern:
 - expose safe operational tools instead
 - reuse the same backend surface used by humans
 
-An important next step is moving from single actions to runbook-shaped operations such as preparing the VPN lab, bringing up the blue-team stack, and rotating security updates across eligible Ubuntu VMs. In this project, those runbooks must also respect critical infrastructure constraints like `FG-VM`, the FortiGate VM that acts as the backbone gateway for the lab.
+An important next step is moving from single actions to runbook-shaped operations such as preparing the VPN lab, bringing up the blue-team stack, and rotating security updates across eligible managed Linux and Windows VMs. In this project, those runbooks must also respect critical infrastructure constraints like `FG-VM`, the FortiGate VM that acts as the backbone gateway for the lab.
 
 ## Recommended GitHub Strategy
 

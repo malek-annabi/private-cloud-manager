@@ -23,7 +23,9 @@ The frontend currently provides:
 - job volume and frontend/backend traffic charts
 - start and stop actions with state-aware buttons
 - editable SSH connection details
-- managed Ubuntu server update action with OS version and patch metadata
+- UI-based VM registration with VMX path, VM type, SSH details, tags, and generic OS family selection
+- fixed in-view navigation with smooth jumps between dashboard sections
+- managed Linux and Windows update action with OS version and patch metadata
 - on-demand security change feed with kernel/core package highlights before patching
 - automatic OS metadata refresh after interactive SSH login
 - lab preset controls for Blue Team, Red Team, Purple Team, and WG-VPN
@@ -99,7 +101,7 @@ Typical operator flow from the UI:
 2. Start or stop a VM through jobs
 3. Edit SSH target details if a guest IP changes
 4. Open one or more SSH tabs
-5. Queue a managed Ubuntu update when needed
-6. Inspect the security change feed before sensitive Ubuntu patching
+5. Queue a managed Linux or Windows update when needed
+6. Inspect the security change feed before sensitive Ubuntu, Debian, Kali, or Windows patching
 7. Check Jobs and Audit for history and results
 8. Fire or stop a named lab preset, optionally including the gateway on stop

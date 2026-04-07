@@ -19,6 +19,23 @@ export type VmRecord = {
   sshUser?: string | null;
 };
 
+export type CreateVmPayload = {
+  id: string;
+  name: string;
+  vmxPath: string;
+  type: "PERSISTENT" | "TEMPLATE" | "EPHEMERAL";
+  tags?: string[];
+  osFamily?: "ubuntu" | "debian" | "kali" | "windows" | "fortigate" | "other" | null;
+  osVersion?: string;
+  sshHost?: string;
+  sshPort?: number | null;
+  sshUser?: string;
+  sshKeyPath?: string;
+  sshPassword?: string;
+};
+
+export type UpdateVmSettingsPayload = Omit<CreateVmPayload, "id">;
+
 export type VmUpdateFeedRecord = {
   vmId: string;
   vmName: string;
@@ -45,6 +62,19 @@ export type VmUpdateFeedRecord = {
 
 export const fetchVMs = async (): Promise<VmRecord[]> => {
   const res = await api.get("/vms");
+  return res.data;
+};
+
+export const createVm = async (payload: CreateVmPayload): Promise<VmRecord> => {
+  const res = await api.post("/vms", payload);
+  return res.data;
+};
+
+export const updateVmSettings = async (
+  vmId: string,
+  payload: UpdateVmSettingsPayload,
+): Promise<VmRecord> => {
+  const res = await api.patch(`/vms/${vmId}/settings`, payload);
   return res.data;
 };
 

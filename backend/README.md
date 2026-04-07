@@ -23,7 +23,7 @@ The backend is responsible for:
 - exposing interactive SSH sessions over WebSocket
 - persisting job logs and audit events
 - tracking VM activity such as `last seen online` and `last SSH login`
-- running managed Ubuntu update jobs and persisting patch metadata
+- running managed Linux and Windows update jobs and persisting patch metadata
 - refreshing remote OS family/version and reboot-needed state on interactive SSH connect
 - exposing lightweight API traffic telemetry for dashboard charts
 
@@ -32,6 +32,7 @@ The backend is responsible for:
 - `GET /api/health`
 - `GET /api/vms`
 - `GET /api/vms/:id`
+- `POST /api/vms`
 - `GET /api/vms/:id/ssh-ready`
 - `GET /api/vms/:id/update-feed`
 - `PATCH /api/vms/:id/tags`
@@ -65,6 +66,7 @@ The `VM` record is the live operational copy of your inventory. It stores:
 - static bootstrap data from `inventory.json`
 - live power state derived from VMware
 - SSH connection details that can be edited from the UI
+- UI/API-created VM records that live in SQLite without modifying the private inventory bootstrap file
 - activity metadata such as `lastSeenOnlineAt` and `lastSshLoginAt`
 - OS patch metadata such as `osFamily`, `osVersion`, `lastUpdatedAt`, and `rebootRequired`
 
@@ -103,9 +105,9 @@ http://127.0.0.1:8000
 - interactive SSH is handled separately through the WebSocket server
 - VMware inventory is bootstrapped from `backend/src/data/inventory.json`
 - the real inventory file should stay private and untracked
-- Ubuntu update jobs depend on working SSH credentials and `sudo` privileges on the guest
+- Linux update jobs depend on working SSH credentials and `sudo` privileges on the guest; Windows update jobs depend on Windows OpenSSH and Windows Update Agent availability
 - interactive SSH sessions also refresh OS family/version and reboot-required state
-- `GET /api/vms/:id/update-feed` gives an on-demand Ubuntu package change feed, including security candidates and kernel/core package highlights
+- `GET /api/vms/:id/update-feed` gives an on-demand package change feed for Ubuntu, Debian, Kali, and Windows, including security candidates when classification is available and kernel/core/cumulative/servicing-stack highlights
 - `GET /api/metrics/traffic` gives in-memory frontend/backend API traffic buckets for the dashboard
 - `FG-VM` is treated as critical lab infrastructure and routine stop actions are guarded unless an explicit override is provided
 
@@ -117,14 +119,14 @@ http://127.0.0.1:8000
    - valid `.vmx` paths
    - SSH host/user/port
    - either `password` or `privateKeyPath`
-   - optional OS hints such as Ubuntu `family` and `version`
+   - optional OS hints such as Ubuntu, Debian, Kali, or Windows `family` and `version`
 3. Make sure `vmrun.exe` is available where the adapter expects it
 4. Run `npx prisma generate` and `npx prisma db push`
 5. Start the backend and check `GET /api/health`
 
 ## Update Flow
 
-Managed Ubuntu updates go through `POST /api/jobs/update-vm`.
+Managed Linux and Windows updates go through `POST /api/jobs/update-vm`.
 
 The backend:
 

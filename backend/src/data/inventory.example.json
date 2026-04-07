@@ -37,6 +37,22 @@
       "name": "Kali Template",
       "vmxPath": "E:\\Templates\\Kali\\Kali.vmx",
       "type": "TEMPLATE"
+    },
+    {
+      "id": "windows-lab",
+      "name": "Windows Lab VM",
+      "vmxPath": "D:\\Vms\\WindowsLab\\WindowsLab.vmx",
+      "type": "PERSISTENT",
+      "os": {
+        "family": "windows",
+        "version": "Windows Server 2022"
+      },
+      "ssh": {
+        "host": "192.168.1.70",
+        "port": 22,
+        "user": "Administrator",
+        "password": "replace-me"
+      }
     }
   ]
 }

@@ -26,6 +26,30 @@ const updateConnectionSchema = z.object({
   sshUser: z.string().trim().max(100).optional().or(z.literal("")),
 });
 
+const osFamilySchema = z
+  .enum(["ubuntu", "debian", "kali", "windows", "fortigate", "other"])
+  .nullable()
+  .optional();
+
+const createVmSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(160),
+  vmxPath: z.string().trim().min(1).max(1024),
+  type: z.enum(["PERSISTENT", "TEMPLATE", "EPHEMERAL"]).default("PERSISTENT"),
+  tags: z.array(z.string().trim().min(1).max(24)).max(12).optional(),
+  osFamily: osFamilySchema,
+  osVersion: z.string().trim().max(160).optional().or(z.literal("")),
+  sshHost: z.string().trim().max(255).optional().or(z.literal("")),
+  sshPort: z.number().int().min(1).max(65535).nullable().optional(),
+  sshUser: z.string().trim().max(100).optional().or(z.literal("")),
+  sshKeyPath: z.string().trim().max(1024).optional().or(z.literal("")),
+  sshPassword: z.string().max(512).optional().or(z.literal("")),
+});
+
+const updateVmSettingsSchema = createVmSchema.omit({ id: true }).extend({
+  sshPassword: z.string().max(512).optional(),
+});
+
 const updateFeedQuerySchema = z.object({
   mode: z.enum(["security", "full"]).optional(),
 });
@@ -54,6 +78,58 @@ const CRITICAL_UPDATE_PACKAGES = [
   "network-manager",
 ] as const;
 
+function getOsFamilyName(osFamily: string | null | undefined) {
+  return osFamily?.trim().toLowerCase() ?? "";
+}
+
+function inferOsFamilyFromVm(vm: {
+  id?: string | null;
+  name?: string | null;
+  vmxPath?: string | null;
+  osFamily?: string | null;
+  osVersion?: string | null;
+}) {
+  const explicitFamily = getOsFamilyName(vm.osFamily);
+  if (explicitFamily) {
+    return explicitFamily;
+  }
+
+  const haystack = [vm.osVersion, vm.name, vm.id, vm.vmxPath]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (/\bwindows\b|\bwin-srv\b|\bwin-server\b/.test(haystack)) {
+    return "windows";
+  }
+
+  if (/\bubuntu\b/.test(haystack)) {
+    return "ubuntu";
+  }
+
+  if (/\bkali\b/.test(haystack)) {
+    return "kali";
+  }
+
+  if (/\bdebian\b/.test(haystack)) {
+    return "debian";
+  }
+
+  return "";
+}
+
+function isAptManagedOs(osFamily: string | null | undefined) {
+  return ["ubuntu", "debian", "kali"].includes(getOsFamilyName(osFamily));
+}
+
+function isWindowsManagedOs(osFamily: string | null | undefined) {
+  return getOsFamilyName(osFamily) === "windows";
+}
+
+function isSupportedUpdateOs(osFamily: string | null | undefined) {
+  return isAptManagedOs(osFamily) || isWindowsManagedOs(osFamily);
+}
+
 function parseTags(rawTags: string | null | undefined): string[] {
   if (!rawTags) {
     return [];
@@ -72,8 +148,11 @@ function normalizeTags(tags: string[]): string[] {
 }
 
 function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
+  const inferredOsFamily = inferOsFamilyFromVm(vm);
+
   return {
     ...vm,
+    osFamily: vm.osFamily?.trim() ? vm.osFamily : inferredOsFamily || null,
     tags: parseTags(vm.tags),
     powerState,
     isCriticalInfrastructure: isCriticalInfrastructureVm(vm),
@@ -162,11 +241,57 @@ function buildUpdateFeedCommand() {
   ].join("; ");
 }
 
+function buildWindowsUpdateFeedCommand() {
+  return [
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy Bypass",
+    "-Command",
+    "\"$ErrorActionPreference = 'Stop';",
+    "$session = New-Object -ComObject Microsoft.Update.Session;",
+    "$searcher = $session.CreateUpdateSearcher();",
+    "$result = $searcher.Search('IsInstalled=0 and Type=''Software''');",
+    "$items = @();",
+    "for ($i = 0; $i -lt $result.Updates.Count; $i++) {",
+    "$u = $result.Updates.Item($i);",
+    "$items += [pscustomobject]@{",
+    "title = $u.Title;",
+    "kb = ($u.KBArticleIDs -join ',');",
+    "severity = $u.MsrcSeverity;",
+    "rebootRequired = $u.RebootRequired;",
+    "categories = (($u.Categories | ForEach-Object { $_.Name }) -join ',')",
+    "};",
+    "}",
+    "$os = Get-CimInstance Win32_OperatingSystem;",
+    "$pendingReboot = (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') -or (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired');",
+    "[pscustomobject]@{",
+    "osVersion = ($os.Caption + ' ' + $os.Version);",
+    "kernelVersion = $os.BuildNumber;",
+    "rebootRequired = $pendingReboot;",
+    "updates = $items",
+    "} | ConvertTo-Json -Depth 5 -Compress\"",
+  ].join(" ");
+}
+
 function buildMetadataRefreshCommand() {
   return [
     "if [ -f /etc/os-release ]; then . /etc/os-release; printf '__PCM_META__ os_family %s\\n' \"$ID\"; printf '__PCM_META__ os_version %s\\n' \"$PRETTY_NAME\"; fi",
     "printf '__PCM_META__ reboot_required %s\\n' \"$(if [ -f /var/run/reboot-required ]; then printf yes; else printf no; fi)\"",
   ].join("; ");
+}
+
+function buildWindowsMetadataRefreshCommand() {
+  return [
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy Bypass",
+    "-Command",
+    "\"$os = Get-CimInstance Win32_OperatingSystem;",
+    "$pendingReboot = (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') -or (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired');",
+    "Write-Output '__PCM_META__ os_family windows';",
+    "Write-Output ('__PCM_META__ os_version ' + $os.Caption + ' ' + $os.Version);",
+    "Write-Output ('__PCM_META__ reboot_required ' + $(if ($pendingReboot) { 'yes' } else { 'no' }))\"",
+  ].join(" ");
 }
 
 function parseMetadataRefreshOutput(stdout: string) {
@@ -382,6 +507,90 @@ function parseUpdateFeedOutput(stdout: string, mode: "security" | "full") {
   };
 }
 
+function parseWindowsUpdateFeedOutput(stdout: string, mode: "security" | "full") {
+  const parsed = JSON.parse(stdout.trim() || "{}");
+  const updates = Array.isArray(parsed.updates)
+    ? parsed.updates
+    : parsed.updates
+      ? [parsed.updates]
+      : [];
+
+  const packages: UpdateFeedPackage[] = updates.map((item: any) => {
+    const title = String(item.title ?? "Windows update");
+    const severity = String(item.severity ?? "");
+    const categories = String(item.categories ?? "");
+    const kb = String(item.kb ?? "");
+    const securityCandidate =
+      Boolean(severity) ||
+      categories.toLowerCase().includes("security") ||
+      title.toLowerCase().includes("security");
+    const critical =
+      ["critical", "important"].includes(severity.toLowerCase()) ||
+      title.toLowerCase().includes("cumulative update");
+    const kernelRelated =
+      title.toLowerCase().includes("cumulative update") ||
+      title.toLowerCase().includes("servicing stack");
+
+    return {
+      name: title,
+      repository: categories || "Windows Update",
+      targetVersion: kb ? `KB${kb}` : null,
+      currentVersion: null,
+      securityCandidate,
+      critical,
+      kernelRelated,
+    } satisfies UpdateFeedPackage;
+  });
+
+  const relevantPackages =
+    mode === "security"
+      ? packages.filter((item) => item.securityCandidate)
+      : packages;
+  const highlights: string[] = [];
+  const kernelPackages = relevantPackages.filter((item) => item.kernelRelated);
+  const criticalPackages = relevantPackages.filter((item) => item.critical);
+
+  if (relevantPackages.length === 0) {
+    highlights.push(
+      mode === "security"
+        ? "No Windows security-classified updates were detected."
+        : "No pending Windows software updates were detected.",
+    );
+  }
+
+  if (kernelPackages.length > 0) {
+    highlights.push(
+      `Windows cumulative or servicing-stack updates detected: ${kernelPackages
+        .map((item) => item.targetVersion ?? item.name)
+        .join(", ")}.`,
+    );
+  }
+
+  if (criticalPackages.length > 0) {
+    highlights.push(
+      `Critical or important Windows updates detected: ${criticalPackages
+        .map((item) => item.targetVersion ?? item.name)
+        .join(", ")}.`,
+    );
+  }
+
+  return {
+    mode,
+    generatedAt: new Date().toISOString(),
+    osVersion: parsed.osVersion ?? null,
+    kernelVersion: parsed.kernelVersion ?? null,
+    rebootRequired: Boolean(parsed.rebootRequired),
+    aptUpdateStatus: null,
+    totalUpgradable: packages.length,
+    securityCandidateCount: packages.filter((item) => item.securityCandidate).length,
+    highlights,
+    sourceNotes: [
+      "Windows update feed is generated through Windows Update Agent over SSH; security classification depends on Microsoft metadata exposed to the guest.",
+    ],
+    packages,
+  };
+}
+
 /**
  * GET /api/vms
  */
@@ -397,6 +606,89 @@ router.get("/", auditMiddleware("LIST_VMS"), async (req, res) => {
   );
 
   res.json(data);
+});
+
+router.post("/", auditMiddleware("CREATE_VM"), async (req, res) => {
+  const parsed = createVmSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid VM payload", details: parsed.error.flatten() });
+  }
+
+  const payload = parsed.data;
+  const existing = await prisma.vM.findUnique({
+    where: { id: payload.id },
+  });
+
+  if (existing) {
+    return res.status(409).json({ error: "A VM with this id already exists" });
+  }
+
+  const createdVm = (await prisma.vM.create({
+    data: {
+      id: payload.id,
+      name: payload.name,
+      vmxPath: payload.vmxPath,
+      type: payload.type,
+      tags: JSON.stringify(normalizeTags(payload.tags ?? [])),
+      osFamily: payload.osFamily || inferOsFamilyFromVm(payload) || null,
+      osVersion: payload.osVersion?.trim() || null,
+      sshHost: payload.sshHost?.trim() || null,
+      sshPort: payload.sshPort ?? null,
+      sshUser: payload.sshUser?.trim() || null,
+      sshKeyPath: payload.sshKeyPath?.trim() || null,
+      sshPassword: payload.sshPassword || null,
+    },
+  })) as VmWithTags;
+
+  res.status(201).json(serializeVm(createdVm, await getVmPowerState(createdVm.vmxPath)));
+});
+
+router.patch("/:id/settings", auditMiddleware("UPDATE_VM_SETTINGS"), async (req, res) => {
+  const parsedId = vmIdSchema.safeParse(req.params);
+
+  if (!parsedId.success) {
+    return res.status(400).json({ error: "Invalid VM ID" });
+  }
+
+  const parsedBody = updateVmSettingsSchema.safeParse(req.body);
+
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: "Invalid VM settings payload", details: parsedBody.error.flatten() });
+  }
+
+  const vm = await prisma.vM.findUnique({
+    where: { id: parsedId.data.id },
+  });
+
+  if (!vm) {
+    return res.status(404).json({ error: "VM not found" });
+  }
+
+  const payload = parsedBody.data;
+  const updateData: Record<string, unknown> = {
+    name: payload.name,
+    vmxPath: payload.vmxPath,
+    type: payload.type,
+    tags: JSON.stringify(normalizeTags(payload.tags ?? [])),
+    osFamily: payload.osFamily || inferOsFamilyFromVm(payload) || null,
+    osVersion: payload.osVersion?.trim() || null,
+    sshHost: payload.sshHost?.trim() || null,
+    sshPort: payload.sshPort ?? null,
+    sshUser: payload.sshUser?.trim() || null,
+    sshKeyPath: payload.sshKeyPath?.trim() || null,
+  };
+
+  if (payload.sshPassword !== undefined) {
+    updateData.sshPassword = payload.sshPassword || null;
+  }
+
+  const updatedVm = (await prisma.vM.update({
+    where: { id: vm.id },
+    data: updateData as never,
+  })) as VmWithTags;
+
+  res.json(serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
 });
 
 /**
@@ -473,8 +765,12 @@ router.get("/:id/update-feed", auditMiddleware("GET_VM_UPDATE_FEED"), async (req
     return res.status(409).json({ error: "VM must be running to inspect update feed" });
   }
 
-  if (vm.osFamily && vm.osFamily.toLowerCase() !== "ubuntu") {
-    return res.status(400).json({ error: "Update feed is currently supported only for Ubuntu VMs" });
+  const osFamily = inferOsFamilyFromVm(vm);
+
+  if (osFamily && !isSupportedUpdateOs(osFamily)) {
+    return res.status(400).json({
+      error: "Update feed is currently supported only for apt-managed Linux VMs and Windows VMs",
+    });
   }
 
   const mode = parsedQuery.data.mode ?? "security";
@@ -486,11 +782,15 @@ router.get("/:id/update-feed", auditMiddleware("GET_VM_UPDATE_FEED"), async (req
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
       password: vm.sshPassword ?? undefined,
-      command: buildUpdateFeedCommand(),
+      command: isWindowsManagedOs(osFamily)
+        ? buildWindowsUpdateFeedCommand()
+        : buildUpdateFeedCommand(),
       timeoutMs: 90_000,
     });
 
-    const feed = parseUpdateFeedOutput(result.stdout, mode);
+    const feed = isWindowsManagedOs(osFamily)
+      ? parseWindowsUpdateFeedOutput(result.stdout, mode)
+      : parseUpdateFeedOutput(result.stdout, mode);
 
     return res.json({
       vmId: vm.id,
@@ -535,7 +835,9 @@ router.post("/:id/refresh-state", auditMiddleware("REFRESH_VM_STATE"), async (re
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
       password: vm.sshPassword ?? undefined,
-      command: buildMetadataRefreshCommand(),
+      command: isWindowsManagedOs(inferOsFamilyFromVm(vm))
+        ? buildWindowsMetadataRefreshCommand()
+        : buildMetadataRefreshCommand(),
       timeoutMs: 20_000,
     });
 

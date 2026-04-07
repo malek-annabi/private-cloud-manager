@@ -10,6 +10,15 @@ const LAB_PRESETS = {
   wg_vpn: ["wireguard"],
 } as const;
 
+function isAptManagedOs(osFamily: string | null | undefined) {
+  const normalized = osFamily?.trim().toLowerCase();
+  return normalized === "ubuntu" || normalized === "debian" || normalized === "kali";
+}
+
+function isManagedUpdateOs(osFamily: string | null | undefined) {
+  return isAptManagedOs(osFamily) || osFamily?.trim().toLowerCase() === "windows";
+}
+
 function getPluginConfig(ctx: any) {
   const pluginConfig =
     ctx?.config?.plugins?.entries?.[PLUGIN_ID]?.config;
@@ -163,6 +172,84 @@ async function executeStartVm(
   );
 }
 
+async function executeCreateVm(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const vm = await apiRequest(ctx, "/vms", {
+    method: "POST",
+    body: JSON.stringify({
+      id: params.id,
+      name: params.name,
+      vmxPath: params.vmxPath,
+      type: params.type ?? "PERSISTENT",
+      tags: Array.isArray(params.tags) ? params.tags : [],
+      osFamily: params.osFamily ?? null,
+      osVersion: params.osVersion ?? "",
+      sshHost: params.sshHost ?? "",
+      sshPort: params.sshPort ?? 22,
+      sshUser: params.sshUser ?? "",
+      sshKeyPath: params.sshKeyPath ?? "",
+      sshPassword: params.sshPassword ?? "",
+    }),
+  });
+
+  return textResult(
+    [
+      `VM registered in Private Cloud Manager.`,
+      `This call only added a VM record to the PCM database; it did not edit inventory.json.`,
+      `id=${vm.id}`,
+      `name=${vm.name}`,
+      vm.osFamily ? `osFamily=${vm.osFamily}` : null,
+      vm.powerState ? `powerState=${vm.powerState}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+async function executeUpdateVmSettings(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const body: Record<string, unknown> = {
+    name: params.name,
+    vmxPath: params.vmxPath,
+    type: params.type ?? "PERSISTENT",
+    tags: Array.isArray(params.tags) ? params.tags : [],
+    osFamily: params.osFamily ?? null,
+    osVersion: params.osVersion ?? "",
+    sshHost: params.sshHost ?? "",
+    sshPort: params.sshPort ?? 22,
+    sshUser: params.sshUser ?? "",
+    sshKeyPath: params.sshKeyPath ?? "",
+  };
+
+  if (typeof params.sshPassword === "string" && params.sshPassword.length > 0) {
+    body.sshPassword = params.sshPassword;
+  }
+
+  const vm = await apiRequest(ctx, `/vms/${encodeURIComponent(params.vmId)}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
+  return textResult(
+    [
+      `VM settings updated in Private Cloud Manager.`,
+      `This call only updated the PCM database record; it did not edit inventory.json.`,
+      `id=${vm.id}`,
+      `name=${vm.name}`,
+      vm.osFamily ? `osFamily=${vm.osFamily}` : null,
+      vm.powerState ? `powerState=${vm.powerState}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
 async function executeStopVm(
   _toolCallId: string,
   params: any,
@@ -280,14 +367,14 @@ async function executeRefreshVmState(
 
   return textResult(
     [
-      `VM state refreshed for ${payload.name ?? params.vmId}.`,
-      payload.powerState ? `powerState=${payload.powerState}` : null,
-      payload.osVersion ? `os=${payload.osVersion}` : null,
-      typeof payload.rebootRequired === "boolean"
-        ? `rebootRequired=${payload.rebootRequired ? "yes" : "no"}`
+      `VM state refreshed for ${payload.vm?.name ?? params.vmId}.`,
+      payload.vm?.powerState ? `powerState=${payload.vm.powerState}` : null,
+      payload.vm?.osVersion ? `os=${payload.vm.osVersion}` : null,
+      typeof payload.vm?.rebootRequired === "boolean"
+        ? `rebootRequired=${payload.vm.rebootRequired ? "yes" : "no"}`
         : null,
-      payload.lastSeenOnlineAt ? `lastSeenOnlineAt=${payload.lastSeenOnlineAt}` : null,
-      payload.lastSshLoginAt ? `lastSshLoginAt=${payload.lastSshLoginAt}` : null,
+      payload.vm?.lastSeenOnlineAt ? `lastSeenOnlineAt=${payload.vm.lastSeenOnlineAt}` : null,
+      payload.vm?.lastSshLoginAt ? `lastSshLoginAt=${payload.vm.lastSshLoginAt}` : null,
     ]
       .filter(Boolean)
       .join("\n")
@@ -347,7 +434,7 @@ async function executeRotateSecurityUpdates(
   const candidates = vms.filter(
     (vm: any) =>
       vm.powerState === "ON" &&
-      vm.osFamily?.toLowerCase?.() === "ubuntu" &&
+      isManagedUpdateOs(vm.osFamily) &&
       vm.type !== "TEMPLATE" &&
       !vm.isCriticalInfrastructure
   );
@@ -598,6 +685,149 @@ const privateCloudManagerPlugin = {
 
     api.registerTool(
       (ctx: any) => ({
+        name: "pcm_create_vm",
+        label: "PCM Create VM",
+        description:
+          "Register a VM in Private Cloud Manager with a generic OS family so update/feed workflows can choose the right command path. This does not edit inventory.json.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: {
+              type: "string",
+              description: "Stable VM id, for example win-srv-2025.",
+            },
+            name: {
+              type: "string",
+              description: "Display name, for example Windows Server 2025.",
+            },
+            vmxPath: {
+              type: "string",
+              description: "Absolute path to the VMware .vmx file.",
+            },
+            type: {
+              type: "string",
+              enum: ["PERSISTENT", "TEMPLATE", "EPHEMERAL"],
+              description: "VM lifecycle type. Defaults to PERSISTENT.",
+            },
+            osFamily: {
+              type: "string",
+              enum: ["ubuntu", "debian", "kali", "windows", "fortigate", "other"],
+              description: "Generic OS family used by backend workflows.",
+            },
+            osVersion: {
+              type: "string",
+              description: "Optional OS version label.",
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional tags.",
+            },
+            sshHost: {
+              type: "string",
+              description: "Optional SSH host or IP.",
+            },
+            sshPort: {
+              type: "number",
+              description: "Optional SSH port.",
+            },
+            sshUser: {
+              type: "string",
+              description: "Optional SSH username.",
+            },
+            sshKeyPath: {
+              type: "string",
+              description: "Optional private key path.",
+            },
+            sshPassword: {
+              type: "string",
+              description: "Optional SSH password.",
+            },
+          },
+          required: ["id", "name", "vmxPath"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeCreateVm(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_update_vm_settings",
+        label: "PCM Update VM Settings",
+        description:
+          "Update a VM database record in Private Cloud Manager, including VMX path, lifecycle type, tags, OS family, and SSH workflow fields. This does not edit inventory.json.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "Existing VM id to update.",
+            },
+            name: {
+              type: "string",
+              description: "Display name.",
+            },
+            vmxPath: {
+              type: "string",
+              description: "Absolute path to the VMware .vmx file.",
+            },
+            type: {
+              type: "string",
+              enum: ["PERSISTENT", "TEMPLATE", "EPHEMERAL"],
+              description: "VM lifecycle type. Defaults to PERSISTENT.",
+            },
+            osFamily: {
+              type: "string",
+              enum: ["ubuntu", "debian", "kali", "windows", "fortigate", "other"],
+              description: "Generic OS family used by backend workflows.",
+            },
+            osVersion: {
+              type: "string",
+              description: "Optional OS version label.",
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional tags.",
+            },
+            sshHost: {
+              type: "string",
+              description: "Optional SSH host or IP.",
+            },
+            sshPort: {
+              type: "number",
+              description: "Optional SSH port.",
+            },
+            sshUser: {
+              type: "string",
+              description: "Optional SSH username.",
+            },
+            sshKeyPath: {
+              type: "string",
+              description: "Optional private key path.",
+            },
+            sshPassword: {
+              type: "string",
+              description:
+                "Optional replacement SSH password. Omit it to keep the stored password unchanged.",
+            },
+          },
+          required: ["vmId", "name", "vmxPath"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeUpdateVmSettings(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
         name: "pcm_stop_vm",
         label: "PCM Stop VM",
         description: "Queue a stop job for a VM by id.",
@@ -673,14 +903,14 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm",
         label: "PCM Update VM",
         description:
-          "Queue a managed Ubuntu server update job for a VM by id. Defaults to security mode.",
+          "Queue a managed update job for an Ubuntu, Debian, Kali, or Windows VM by id. Defaults to security mode where supported.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             vmId: {
               type: "string",
-              description: "The VM id to update, for example ubuntu-web.",
+              description: "The VM id to update, for example ubuntu-web, kali-01, or windows-dc.",
             },
             mode: {
               type: "string",
@@ -706,14 +936,14 @@ const privateCloudManagerPlugin = {
         name: "pcm_get_update_feed",
         label: "PCM Get Update Feed",
         description:
-          "Fetch an on-demand Ubuntu package change feed for a VM, highlighting security candidates, kernel changes, and other critical packages.",
+          "Fetch an on-demand package change feed for an Ubuntu, Debian, Kali, or Windows VM, highlighting security candidates, kernel changes, and other critical packages when classification is available.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             vmId: {
               type: "string",
-              description: "The VM id to inspect, for example ubuntu-web.",
+              description: "The VM id to inspect, for example ubuntu-web, kali-01, or windows-dc.",
             },
             mode: {
               type: "string",
@@ -836,7 +1066,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_rotate_security_updates",
         label: "PCM Rotate Security Updates",
         description:
-          "Inspect running Ubuntu VMs with the security feed, hold anything with critical or kernel-class security changes, and queue only safer security-only update jobs.",
+          "Inspect running managed Linux and Windows VMs with the security feed, hold anything with critical or kernel-class security changes, and queue only safer security-mode update jobs.",
         parameters: {
           type: "object",
           additionalProperties: false,

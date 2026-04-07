@@ -19,7 +19,7 @@ It combines:
 
 - Live VM power state in the dashboard
 - Per-VM `last online` and `last SSH login` activity indicators
-- Ubuntu-aware server update action with OS version, `last updated`, and reboot-required visibility
+- Managed update action for Ubuntu, Debian, Kali, and Windows with OS version, `last updated`, and reboot-required visibility
 - On-demand security change feed with kernel/core package highlights before patching
 - Frontend-to-backend API traffic telemetry chart for live operator activity volume
 - Automatic OS metadata refresh on interactive SSH connect
@@ -32,6 +32,8 @@ It combines:
 - Auto boot-and-connect flow for powered-off VMs
 - Clickable reboot-required badge with soft/hard reboot actions
 - Cyber news feed with modal story view and curated RSS aggregation
+- Fixed in-view navigation for jumping between overview, charts, runbooks, SSH, and inventory
+- UI-based VM registration with generic OS family selection for workflow command routing
 - OpenClaw integration on top of the same backend used by the UI
 
 ## Why I Built It
@@ -78,7 +80,7 @@ Responsibilities:
 - show jobs, logs, and audit activity
 - show job volume and API traffic telemetry
 - let operators update SSH connection details
-- trigger managed Ubuntu server updates
+- trigger managed Linux and Windows server updates
 - refresh OS family, version, and reboot-needed state on SSH connect
 - provide a multi-session browser SSH workspace
 
@@ -91,7 +93,7 @@ Responsibilities:
 - load and persist VM inventory
 - expose VM, job, audit, and readiness APIs
 - execute VMware operations through `vmrun`
-- run managed Ubuntu package update jobs
+- run managed Linux and Windows update jobs
 - refresh remote OS metadata on successful interactive SSH login
 - expose lightweight in-memory API traffic metrics for dashboard charts
 - process background job handlers
@@ -103,6 +105,7 @@ Responsibilities:
 OpenClaw plugin that exposes the backend as tools:
 
 - `pcm_list_vms`
+- `pcm_create_vm`
 - `pcm_start_vm`
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
@@ -140,6 +143,7 @@ The inventory file is not the database. The flow is:
 4. the frontend and OpenClaw plugin operate on the database-backed records
 
 So `inventory.json` is the bootstrap source, while Prisma + SQLite represent the live operational state.
+You can also add VMs directly from the UI or `pcm_create_vm`; those records are stored in SQLite and do not rewrite the private bootstrap inventory file.
 
 ## Inventory File and Public Example
 
@@ -168,7 +172,7 @@ To create your own inventory:
 1. Copy `inventory.example.json` to `inventory.json`
 2. Replace the example VM ids, names, and `.vmx` paths
 3. Add either `password` or `privateKeyPath` for SSH-enabled VMs
-4. Optionally add OS hints such as Ubuntu family/version so update actions are available immediately
+4. Optionally add OS hints such as Ubuntu, Debian, Kali, or Windows family/version so update actions are available immediately
 5. Keep `inventory.json` private and untracked
 
 ## Project Structure
@@ -215,8 +219,8 @@ Important backend notes:
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
 - the backend also exposes lightweight API traffic metrics for the dashboard
-- Ubuntu VMs can be updated through a managed job instead of ad hoc SSH commands
-- Ubuntu VMs can expose an on-demand security change feed that highlights kernel and other critical package updates before patching
+- Ubuntu, Debian, Kali, and Windows VMs can be updated through a managed job instead of ad hoc SSH commands
+- managed Linux and Windows VMs can expose an on-demand package/security change feed that highlights kernel, cumulative, servicing-stack, and other critical package updates before patching when classification is available
 - interactive SSH logins refresh `lastSshLoginAt`, OS family, OS version, and reboot-required state
 
 ### Frontend
@@ -334,6 +338,7 @@ Add the PCM tools to the OpenClaw agent allowlist:
 ```json
 [
   "pcm_list_vms",
+  "pcm_create_vm",
   "pcm_start_vm",
   "pcm_stop_vm",
   "pcm_ssh_exec",
@@ -374,10 +379,11 @@ These files do not make the tools work, but they improve consistency and reduce 
 ## Example OpenClaw Prompts
 
 - `Use pcm_list_vms to list my VMs. Do not use exec.`
+- `Use pcm_create_vm with id "win-srv-2025", name "Windows Server 2025", vmxPath "D:\\Vms\\WIN-SRV-2025\\Windows Server 2025.vmx", osFamily "windows", sshHost "10.10.0.5", sshUser "Administrator". Do not use exec.`
 - `Use pcm_stop_vm with vmId "wireguard". Do not use exec.`
 - `Use pcm_get_job_status with a job id returned by the backend.`
-- `Use pcm_update_vm with vmId "ubuntu-web". Do not use exec.`
-- `Use pcm_get_update_feed with vmId "ubuntu-web" and mode "security". Do not use exec.`
+- `Use pcm_update_vm with vmId "kali-01". Do not use exec.`
+- `Use pcm_get_update_feed with vmId "windows-dc" and mode "security". Do not use exec.`
 - `Use pcm_rotate_security_updates. Do not use exec.`
 - `Use pcm_fire_lab with lab "blue_team". Do not use exec.`
 - `Use pcm_stop_lab with lab "wg_vpn" and includeGateway false. Do not use exec.`
