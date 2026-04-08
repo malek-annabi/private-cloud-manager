@@ -4,21 +4,21 @@ This plugin lets OpenClaw call the existing private-cloud-manager backend as a s
 
 ## Tools
 
-- `pcm_list_vms`
-- `pcm_create_vm`
-- `pcm_update_vm_settings`
-- `pcm_start_vm`
-- `pcm_stop_vm`
-- `pcm_ssh_exec`
-- `pcm_get_job_status`
-- `pcm_update_vm`
-- `pcm_get_update_feed`
-- `pcm_refresh_vm_state`
-- `pcm_reboot_vm`
-- `pcm_get_traffic_metrics`
-- `pcm_rotate_security_updates`
-- `pcm_fire_lab`
-- `pcm_stop_lab`
+- `pcm_list_vms`: inventory and state queries such as “which VMs are online?”, “what VMs do I have?”, or “which VM is the firewall?”
+- `pcm_create_vm`: add/register a new VM record in PCM
+- `pcm_update_vm_settings`: edit an existing VM record, including VMX path, OS family, tags, and SSH settings
+- `pcm_start_vm`: power on a VM
+- `pcm_stop_vm`: power off a VM
+- `pcm_ssh_exec`: run a one-off SSH command through the backend job path
+- `pcm_get_job_status`: inspect a queued job and its logs
+- `pcm_update_vm`: queue a managed OS update job for Linux or Windows
+- `pcm_get_update_feed`: inspect pending updates and security-sensitive package changes before patching
+- `pcm_refresh_vm_state`: pull fresh live state and guest metadata after a reboot, update, or manual change
+- `pcm_reboot_vm`: reboot a VM softly or hard if it is stuck
+- `pcm_get_traffic_metrics`: read recent backend traffic/request telemetry
+- `pcm_rotate_security_updates`: run a safer batch security update rotation using the update feed as a gate
+- `pcm_fire_lab`: start a named lab stack such as Blue Team, Red Team, Purple Team, or WG-VPN
+- `pcm_stop_lab`: stop a named lab stack, optionally including the gateway VM
 
 These tools call the backend routes that already exist today:
 
@@ -34,6 +34,28 @@ These tools call the backend routes that already exist today:
 - `POST /api/jobs/reboot-vm`
 - `GET /api/metrics/traffic`
 - `GET /api/labs`
+
+## Natural-language intent
+
+The plugin descriptions are intentionally written so OpenClaw can infer the right tool from normal operator phrasing instead of needing exact tool names every time.
+
+Examples:
+
+- “Which VMs are online right now?” -> `pcm_list_vms`
+- “Start the WireGuard box” -> `pcm_start_vm`
+- “Stop the Kali VM” -> `pcm_stop_vm`
+- “Run `ip a` on wireguard” -> `pcm_ssh_exec`
+- “Did that update job fail?” -> `pcm_get_job_status`
+- “Patch the Windows server with security updates” -> `pcm_update_vm`
+- “Show me pending security changes on kali-01” -> `pcm_get_update_feed`
+- “Refresh the Windows VM state after reboot” -> `pcm_refresh_vm_state`
+- “Soft reboot FG-VM” -> `pcm_reboot_vm`
+- “Show recent API traffic” -> `pcm_get_traffic_metrics`
+- “Rotate safe security updates across the fleet” -> `pcm_rotate_security_updates`
+- “Fire the blue team lab” -> `pcm_fire_lab`
+- “Stop WG-VPN and include the gateway” -> `pcm_stop_lab`
+
+If the model is still weak at tool selection, improve OpenClaw workspace grounding so it must prefer PCM tools for VM state, power actions, update checks, and lab orchestration questions.
 
 ## Suggested OpenClaw config
 

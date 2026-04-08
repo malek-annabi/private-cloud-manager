@@ -646,13 +646,13 @@ const privateCloudManagerPlugin = {
   id: PLUGIN_ID,
   name: "Private Cloud Manager",
   description:
-    "VM inventory and job tools for a local VMware private cloud manager backend.",
+    "Operator tools for a VMware homelab control plane: inventory, power actions, SSH jobs, update feeds, security patching, rebooting, traffic telemetry, and lab runbooks.",
   register(api: any) {
     api.registerTool((ctx: any) => ({
       name: "pcm_list_vms",
       label: "PCM List VMs",
       description:
-        "List VMware VMs known to the private cloud manager backend.",
+        "Use this for VM inventory or status questions such as which VMs exist, which VMs are online or offline, which machine is the firewall, or which VM has SSH configured. Returns the current PCM VM list with power state and optional SSH details.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -673,7 +673,8 @@ const privateCloudManagerPlugin = {
       (ctx: any) => ({
         name: "pcm_start_vm",
         label: "PCM Start VM",
-        description: "Queue a start job for a VM by id.",
+        description:
+          "Use this when the user wants to power on, boot, fire up, or bring online a specific VM by id. Queues a backend start job; it does not claim the VM is already fully booted.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -697,7 +698,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_create_vm",
         label: "PCM Create VM",
         description:
-          "Register a VM in Private Cloud Manager with a generic OS family so update/feed workflows can choose the right command path. This does not edit inventory.json.",
+          "Use this when the user wants to add, register, or onboard a VM into PCM. Stores the VM record, VMX path, OS family, and SSH fields in the PCM database so later workflows such as update feeds, reboot, refresh state, and SSH jobs know how to handle it. This does not edit inventory.json.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -768,7 +769,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm_settings",
         label: "PCM Update VM Settings",
         description:
-          "Update a VM database record in Private Cloud Manager, including VMX path, lifecycle type, tags, OS family, and SSH workflow fields. This does not edit inventory.json.",
+          "Use this when the user wants to edit or correct a VM record in PCM, including name, VMX path, lifecycle type, tags, OS family, OS version, and SSH workflow settings. This updates the PCM database only; it does not edit inventory.json.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -839,7 +840,8 @@ const privateCloudManagerPlugin = {
       (ctx: any) => ({
         name: "pcm_stop_vm",
         label: "PCM Stop VM",
-        description: "Queue a stop job for a VM by id.",
+        description:
+          "Use this when the user wants to power off, shut down, or stop a specific VM by id. Queues a backend stop job and is suitable for routine VM shutdowns.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -863,7 +865,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_ssh_exec",
         label: "PCM SSH Exec",
         description:
-          "Queue an SSH execution job for a VM by id using the backend policy controls.",
+          "Use this when the user explicitly wants a command executed inside a VM over SSH, such as checking services, collecting output, or running a one-off admin command. This goes through the backend SSH policy path and creates an auditable job.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -890,7 +892,8 @@ const privateCloudManagerPlugin = {
     api.registerTool((ctx: any) => ({
       name: "pcm_get_job_status",
       label: "PCM Get Job Status",
-      description: "Fetch the status and logs for a previously created job.",
+      description:
+        "Use this after any queued action when the user asks whether a job finished, failed, or what its logs say. Returns job status plus backend log lines.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -912,7 +915,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm",
         label: "PCM Update VM",
         description:
-          "Queue a managed update job for an Ubuntu, Debian, Kali, or Windows VM by id. Defaults to security mode where supported.",
+          "Use this when the user wants to patch, update, or apply operating system updates to a VM. Supports Ubuntu, Debian, Kali, and Windows. Defaults to security-focused updates where supported and creates a managed backend job instead of free-form SSH patching.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -945,7 +948,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_get_update_feed",
         label: "PCM Get Update Feed",
         description:
-          "Fetch an on-demand package change feed for an Ubuntu, Debian, Kali, or Windows VM, highlighting security candidates, kernel changes, and other critical packages when classification is available.",
+          "Use this before patching when the user asks what updates are pending, whether there are security updates, whether a kernel or critical package will change, or whether a VM looks safe to patch. Supports Ubuntu, Debian, Kali, and Windows.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -974,7 +977,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_refresh_vm_state",
         label: "PCM Refresh VM State",
         description:
-          "Refresh the current live state and guest metadata for a VM through the backend SSH path.",
+          "Use this when the user wants the latest live state for a running VM, especially after a reboot, patch, or guest-side change. Refreshes guest metadata such as OS version, reboot-required flag, and last-seen timestamps through the backend state path.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -998,7 +1001,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_reboot_vm",
         label: "PCM Reboot VM",
         description:
-          "Queue a reboot job for a VM. Use soft for normal maintenance and hard when the guest is stuck.",
+          "Use this when the user wants to restart a VM. Choose soft for normal maintenance reboots and hard only when the guest is stuck or unresponsive.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -1027,7 +1030,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_get_traffic_metrics",
         label: "PCM Get Traffic Metrics",
         description:
-          "Fetch frontend-to-backend API traffic telemetry buckets from the dashboard backend.",
+          "Use this for dashboard/API traffic questions such as recent request volume, inbound and outbound traffic over time, or how busy the PCM backend has been recently.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -1050,7 +1053,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_fire_lab",
         label: "PCM Fire Lab",
         description:
-          "Queue start actions for a named lab preset. Starts FG-VM first if the gateway is down.",
+          "Use this when the user wants to bring up a whole lab stack such as blue team, red team, purple team, or WG-VPN. Reads the current lab definition from PCM and queues the required VM start actions, including the gateway first when that lab depends on it.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -1075,7 +1078,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_rotate_security_updates",
         label: "PCM Rotate Security Updates",
         description:
-          "Inspect running managed Linux and Windows VMs with the security feed, hold anything with critical or kernel-class security changes, and queue only safer security-mode update jobs.",
+          "Use this for a safer batch security-patching run across the fleet. It checks running supported VMs with the security feed first, blocks risky targets with critical or kernel-class changes, and queues only the safer security-mode update jobs.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -1093,7 +1096,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_stop_lab",
         label: "PCM Stop Lab",
         description:
-          "Queue stop actions for a named lab preset. Can optionally also stop FG-VM with an explicit critical-infrastructure override.",
+          "Use this when the user wants to shut down a whole lab stack such as blue team, red team, purple team, or WG-VPN. Reads the current lab definition from PCM and queues the matching stop actions. It can also include that lab's gateway VM if the user explicitly asks for it.",
         parameters: {
           type: "object",
           additionalProperties: false,
