@@ -21,6 +21,9 @@ Today the system provides:
 - live frontend-to-backend API traffic telemetry in the dashboard
 - automatic OS metadata refresh on interactive SSH connect
 - encrypted-at-rest VM SSH password storage with write-only UI fields
+- a two-plane VM model that separates guest SSH/update workflows from VMware Workstation hardware/profile management
+- ISO-based VMware Workstation provisioning through the same control plane
+- delete VM controls with a split between PCM-only removal and full VMware Workstation delete-from-disk
 - an OpenClaw plugin for local AI-assisted operations through Ollama
 - a planned runbook layer for controlled natural-language lab workflows
 - first lab preset actions for Blue Team, Red Team, Purple Team, and WG-VPN
@@ -63,6 +66,8 @@ The OpenClaw plugin exposes the backend as explicit tools:
 
 - `pcm_list_vms`
 - `pcm_create_vm`
+- `pcm_update_vm_settings`
+- `pcm_delete_vm`
 - `pcm_start_vm`
 - `pcm_stop_vm`
 - `pcm_ssh_exec`

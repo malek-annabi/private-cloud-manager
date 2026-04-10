@@ -40,6 +40,11 @@ export const rebootVM = (
   options?: { rebootMode?: "soft" | "hard" },
 ) => api.post("/jobs/reboot-vm", { vmId, ...options });
 
+export const deleteVM = (
+  vmId: string,
+  options?: { deleteFromDisk?: boolean },
+) => api.post("/jobs/delete-vm", { vmId, ...options });
+
 export const updateVM = (
   vmId: string,
   options?: { mode?: "security" | "full"; autoremove?: boolean },

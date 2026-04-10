@@ -34,13 +34,15 @@ import {
   refreshVmState,
   type CreateVmPayload,
   type UpdateVmSettingsPayload,
+  type UpdateVmwareProfilePayload,
   type VmUpdateFeedRecord,
   type VmRecord,
   updateVmConnection,
   updateVmSettings,
+  updateVmwareProfile,
   updateVmTags,
 } from "../api/vms";
-import { rebootVM, startVM, stopVM, updateVM } from "../api/jobs";
+import { deleteVM, rebootVM, startVM, stopVM, updateVM } from "../api/jobs";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
@@ -96,10 +98,22 @@ const OS_FAMILY_OPTIONS: Array<{
   { value: "other", label: "Other / unsupported" },
 ];
 
+const VMWARE_NETWORK_OPTIONS: Array<{
+  value: NonNullable<CreateVmPayload["workstationNetworkMode"]>;
+  label: string;
+}> = [
+  { value: "nat", label: "NAT" },
+  { value: "bridged", label: "Bridged" },
+  { value: "hostonly", label: "Host-only" },
+  { value: "custom", label: "Custom vmnet" },
+];
+
 const DEFAULT_NEW_VM_DRAFT = {
+  creationMode: "register" as NonNullable<CreateVmPayload["creationMode"]>,
   id: "",
   name: "",
   vmxPath: "",
+  vmFolderPath: "",
   type: "PERSISTENT" as CreateVmPayload["type"],
   tags: "",
   osFamily: "ubuntu" as NonNullable<CreateVmPayload["osFamily"]>,
@@ -109,11 +123,19 @@ const DEFAULT_NEW_VM_DRAFT = {
   sshUser: "",
   sshKeyPath: "",
   sshPassword: "",
+  workstationGuestId: "",
+  workstationCpuCount: "2",
+  workstationMemoryMb: "4096",
+  workstationDiskGb: "60",
+  workstationIsoPath: "",
+  workstationNetworkMode: "nat" as NonNullable<CreateVmPayload["workstationNetworkMode"]>,
+  workstationNetworkLabel: "",
 };
 
 const DEFAULT_VM_SETTINGS_DRAFT = {
   name: "",
   vmxPath: "",
+  vmFolderPath: "",
   type: "PERSISTENT" as CreateVmPayload["type"],
   tags: "",
   osFamily: "other" as NonNullable<CreateVmPayload["osFamily"]>,
@@ -123,6 +145,13 @@ const DEFAULT_VM_SETTINGS_DRAFT = {
   sshUser: "",
   sshKeyPath: "",
   sshPassword: "",
+  workstationGuestId: "",
+  workstationCpuCount: "2",
+  workstationMemoryMb: "4096",
+  workstationDiskGb: "60",
+  workstationIsoPath: "",
+  workstationNetworkMode: "nat" as NonNullable<CreateVmPayload["workstationNetworkMode"]>,
+  workstationNetworkLabel: "",
 };
 
 const LAB_TONE_OPTIONS: Array<{ value: LabStackTone; label: string }> = [
@@ -153,16 +182,22 @@ export default function VMs() {
   const { data: labStacks = [] } = useLabStacks();
   const [sshSessions, setSshSessions] = useState<Array<{ id: string; vmId: string }>>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [isSshWindowMinimized, setIsSshWindowMinimized] = useState(false);
+  const [sshWindowMode, setSshWindowMode] = useState<"normal" | "compact" | "expanded">("normal");
+  const [sshFontSize, setSshFontSize] = useState(13);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddSessionOpen, setIsAddSessionOpen] = useState(false);
   const [isOpeningSessionFor, setIsOpeningSessionFor] = useState<string | null>(null);
   const [isCreateVmOpen, setIsCreateVmOpen] = useState(false);
   const [newVmDraft, setNewVmDraft] = useState(DEFAULT_NEW_VM_DRAFT);
+  const [createVmTab, setCreateVmTab] = useState<"guest" | "workstation">("guest");
   const [isCreatingVm, setIsCreatingVm] = useState(false);
   const [createVmError, setCreateVmError] = useState("");
   const [editingVmSettingsId, setEditingVmSettingsId] = useState<string | null>(null);
   const [vmSettingsDraft, setVmSettingsDraft] = useState(DEFAULT_VM_SETTINGS_DRAFT);
+  const [editVmTab, setEditVmTab] = useState<"guest" | "workstation">("guest");
   const [isSavingVmSettings, setIsSavingVmSettings] = useState(false);
+  const [isSavingVmwareProfile, setIsSavingVmwareProfile] = useState(false);
   const [vmSettingsError, setVmSettingsError] = useState("");
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
   const [savingTagsFor, setSavingTagsFor] = useState<string | null>(null);
@@ -199,6 +234,11 @@ export default function VMs() {
   } | null>(null);
   const [isQueueingRebootFor, setIsQueueingRebootFor] = useState<string | null>(null);
   const [refreshingVmId, setRefreshingVmId] = useState<string | null>(null);
+  const [deleteVmState, setDeleteVmState] = useState<{
+    vmId: string;
+    deleteFromDisk: boolean;
+  } | null>(null);
+  const [isDeletingVmFor, setIsDeletingVmFor] = useState<string | null>(null);
   const [showAllCyberNews, setShowAllCyberNews] = useState(false);
   const [isCyberNewsPaused, setIsCyberNewsPaused] = useState(false);
   const [selectedCyberStory, setSelectedCyberStory] = useState<CyberNewsItem | null>(null);
@@ -323,6 +363,18 @@ export default function VMs() {
   }, [activeSessionId, sshSessions]);
 
   useEffect(() => {
+    if (!activeSessionVm || isSshWindowMinimized) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));
+    }, 40);
+
+    return () => window.clearTimeout(timer);
+  }, [activeSessionVm, isSshWindowMinimized, sshWindowMode]);
+
+  useEffect(() => {
     const container = cyberNewsScrollerRef.current;
     if (!container || isCyberNewsPaused) {
       return;
@@ -349,7 +401,45 @@ export default function VMs() {
     return () => window.clearInterval(interval);
   }, [cyberNews?.items.length, isCyberNewsPaused, showAllCyberNews]);
 
-  if (isLoading) return <div>Loading...</div>;
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Card className="overflow-hidden border-white/10 bg-white/5">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                Inventory scan
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight text-white">
+                Building the VMware inventory view
+              </h1>
+              <p className="max-w-3xl text-sm leading-6 text-slate-300">
+                PCM is checking live power state, syncing guest telemetry, and loading cached Workstation hardware inventory.
+                Deep hardware scans are cached for 12 hours and refreshed automatically after VM creation or hardware edits.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="h-2 overflow-hidden rounded-full bg-slate-900/80">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-teal-400 via-cyan-300 to-sky-400" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4 text-sm text-slate-300">
+                  Checking VM power state
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4 text-sm text-slate-300">
+                  Reading cached disks and NICs
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4 text-sm text-slate-300">
+                  Preparing operator dashboard
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const saveTags = async (vm: VmRecord) => {
     const draft = tagDrafts[vm.id] ?? "";
@@ -376,15 +466,32 @@ export default function VMs() {
     const id = newVmDraft.id.trim();
     const name = newVmDraft.name.trim();
     const vmxPath = newVmDraft.vmxPath.trim();
+    const vmFolderPath = newVmDraft.vmFolderPath.trim();
     const sshPortRaw = newVmDraft.sshPort.trim();
     const sshPort = sshPortRaw ? Number(sshPortRaw) : null;
+    const cpuCountRaw = newVmDraft.workstationCpuCount.trim();
+    const memoryMbRaw = newVmDraft.workstationMemoryMb.trim();
+    const diskGbRaw = newVmDraft.workstationDiskGb.trim();
+    const workstationCpuCount = cpuCountRaw ? Number(cpuCountRaw) : null;
+    const workstationMemoryMb = memoryMbRaw ? Number(memoryMbRaw) : null;
+    const workstationDiskGb = diskGbRaw ? Number(diskGbRaw) : null;
     const tags = newVmDraft.tags
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean);
 
-    if (!id || !name || !vmxPath) {
-      setCreateVmError("VM id, name, and VMX path are required.");
+    if (!id || !name) {
+      setCreateVmError("VM id and name are required.");
+      return;
+    }
+
+    if (newVmDraft.creationMode === "register" && !vmxPath) {
+      setCreateVmError("VMX path is required when registering an existing VM.");
+      return;
+    }
+
+    if (newVmDraft.creationMode === "provision" && !vmFolderPath) {
+      setCreateVmError("VM folder path is required when provisioning a VMware Workstation VM.");
       return;
     }
 
@@ -396,14 +503,40 @@ export default function VMs() {
       return;
     }
 
+    if (
+      cpuCountRaw &&
+      (!Number.isInteger(workstationCpuCount) || workstationCpuCount === null || workstationCpuCount < 1)
+    ) {
+      setCreateVmError("vCPU count must be a valid positive integer.");
+      return;
+    }
+
+    if (
+      memoryMbRaw &&
+      (!Number.isInteger(workstationMemoryMb) || workstationMemoryMb === null || workstationMemoryMb < 256)
+    ) {
+      setCreateVmError("Memory must be a valid integer in MB.");
+      return;
+    }
+
+    if (
+      newVmDraft.creationMode === "provision" &&
+      (!Number.isInteger(workstationDiskGb) || workstationDiskGb === null || workstationDiskGb < 8)
+    ) {
+      setCreateVmError("Primary disk size must be a valid integer in GB.");
+      return;
+    }
+
     setIsCreatingVm(true);
     setCreateVmError("");
 
     try {
       await createVm({
+        creationMode: newVmDraft.creationMode,
         id,
         name,
         vmxPath,
+        vmFolderPath,
         type: newVmDraft.type,
         tags,
         osFamily: newVmDraft.osFamily,
@@ -413,15 +546,23 @@ export default function VMs() {
         sshUser: newVmDraft.sshUser.trim(),
         sshKeyPath: newVmDraft.sshKeyPath.trim(),
         sshPassword: newVmDraft.sshPassword,
+        workstationGuestId: newVmDraft.workstationGuestId.trim(),
+        workstationCpuCount,
+        workstationMemoryMb,
+        workstationDiskGb,
+        workstationIsoPath: newVmDraft.workstationIsoPath.trim(),
+        workstationNetworkMode: newVmDraft.workstationNetworkMode,
+        workstationNetworkLabel: newVmDraft.workstationNetworkLabel.trim(),
       });
       await queryClient.invalidateQueries({ queryKey: ["vms"] });
       setNewVmDraft(DEFAULT_NEW_VM_DRAFT);
+      setCreateVmTab("guest");
       setIsCreateVmOpen(false);
     } catch (error: any) {
       setCreateVmError(
         error?.response?.data?.error ??
           error?.message ??
-          "Could not add the VM. Check the VM id and VMX path.",
+          "Could not create or register the VM. Check the Workstation and guest settings.",
       );
     } finally {
       setIsCreatingVm(false);
@@ -432,10 +573,12 @@ export default function VMs() {
     const inferredFamily = inferOsFamilyFromVm(vm);
 
     setEditingVmSettingsId(vm.id);
+    setEditVmTab("guest");
     setVmSettingsError("");
     setVmSettingsDraft({
       name: vm.name,
       vmxPath: vm.vmxPath,
+      vmFolderPath: vm.vmFolderPath ?? "",
       type: vm.type,
       tags: vm.tags.join(", "),
       osFamily: (inferredFamily || "other") as NonNullable<CreateVmPayload["osFamily"]>,
@@ -445,6 +588,14 @@ export default function VMs() {
       sshUser: vm.sshUser ?? "",
       sshKeyPath: "",
       sshPassword: "",
+      workstationGuestId: vm.workstationGuestId ?? "",
+      workstationCpuCount: String(vm.workstationCpuCount ?? 2),
+      workstationMemoryMb: String(vm.workstationMemoryMb ?? 4096),
+      workstationDiskGb: String(vm.workstationDiskGb ?? 60),
+      workstationIsoPath: vm.workstationIsoPath ?? "",
+      workstationNetworkMode: (vm.workstationNetworkMode ??
+        "nat") as NonNullable<CreateVmPayload["workstationNetworkMode"]>,
+      workstationNetworkLabel: vm.workstationNetworkLabel ?? "",
     });
   };
 
@@ -508,6 +659,76 @@ export default function VMs() {
     }
   };
 
+  const saveVmwareSettings = async (vm: VmRecord) => {
+    const cpuCountRaw = vmSettingsDraft.workstationCpuCount.trim();
+    const memoryMbRaw = vmSettingsDraft.workstationMemoryMb.trim();
+    const diskGbRaw = vmSettingsDraft.workstationDiskGb.trim();
+    const workstationCpuCount = cpuCountRaw ? Number(cpuCountRaw) : null;
+    const workstationMemoryMb = memoryMbRaw ? Number(memoryMbRaw) : null;
+    const workstationDiskGb = diskGbRaw ? Number(diskGbRaw) : null;
+
+    if (!vmSettingsDraft.vmxPath.trim()) {
+      setVmSettingsError("VMX path is required for VMware Workstation management.");
+      return;
+    }
+
+    if (
+      cpuCountRaw &&
+      (!Number.isInteger(workstationCpuCount) || workstationCpuCount === null || workstationCpuCount < 1)
+    ) {
+      setVmSettingsError("vCPU count must be a valid positive integer.");
+      return;
+    }
+
+    if (
+      memoryMbRaw &&
+      (!Number.isInteger(workstationMemoryMb) || workstationMemoryMb === null || workstationMemoryMb < 256)
+    ) {
+      setVmSettingsError("Memory must be a valid integer in MB.");
+      return;
+    }
+
+    if (
+      diskGbRaw &&
+      (!Number.isInteger(workstationDiskGb) || workstationDiskGb === null || workstationDiskGb < 8)
+    ) {
+      setVmSettingsError("Primary disk size must be a valid integer in GB.");
+      return;
+    }
+
+    const payload: UpdateVmwareProfilePayload = {
+      name: vmSettingsDraft.name.trim(),
+      vmxPath: vmSettingsDraft.vmxPath.trim(),
+      vmFolderPath: vmSettingsDraft.vmFolderPath.trim(),
+      workstationGuestId: vmSettingsDraft.workstationGuestId.trim(),
+      workstationCpuCount,
+      workstationMemoryMb,
+      workstationDiskGb,
+      workstationIsoPath: vmSettingsDraft.workstationIsoPath.trim(),
+      workstationNetworkMode: vmSettingsDraft.workstationNetworkMode,
+      workstationNetworkLabel: vmSettingsDraft.workstationNetworkLabel.trim(),
+    };
+
+    setIsSavingVmwareProfile(true);
+    setVmSettingsError("");
+
+    try {
+      await updateVmwareProfile(vm.id, payload);
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      setEditingVmSettingsId(null);
+      setVmSettingsDraft(DEFAULT_VM_SETTINGS_DRAFT);
+      setEditVmTab("guest");
+    } catch (error: any) {
+      setVmSettingsError(
+        error?.response?.data?.error ??
+          error?.message ??
+          "Could not apply the VMware Workstation profile. Power the VM off first and verify the paths.",
+      );
+    } finally {
+      setIsSavingVmwareProfile(false);
+    }
+  };
+
   const runVmAction = async (vmId: string, action: "start" | "stop") => {
     setRunningActionFor(`${action}:${vmId}`);
 
@@ -557,6 +778,19 @@ export default function VMs() {
       await queryClient.invalidateQueries({ queryKey: ["vms"] });
     } finally {
       setRefreshingVmId(null);
+    }
+  };
+
+  const queueVmDelete = async (vm: VmRecord, deleteFromDisk: boolean) => {
+    setIsDeletingVmFor(vm.id);
+
+    try {
+      await deleteVM(vm.id, { deleteFromDisk });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["vms"] });
+      setDeleteVmState(null);
+    } finally {
+      setIsDeletingVmFor(null);
     }
   };
 
@@ -846,6 +1080,8 @@ export default function VMs() {
     const sessionId = crypto.randomUUID();
     setSshSessions((current) => [...current, { id: sessionId, vmId }]);
     setActiveSessionId(sessionId);
+    setIsSshWindowMinimized(false);
+    setSshWindowMode("normal");
     setIsAddSessionOpen(false);
   };
 
@@ -910,8 +1146,13 @@ export default function VMs() {
         return remaining[0]?.id ?? null;
       });
 
-      return remaining;
-    });
+        return remaining;
+      });
+  };
+
+  const restoreSshWindow = () => {
+    setIsSshWindowMinimized(false);
+    window.setTimeout(() => window.dispatchEvent(new Event("resize")), 30);
   };
 
   const scrollToVmSection = (href: string) => {
@@ -983,6 +1224,7 @@ export default function VMs() {
     editingVmSettingsId != null
       ? data.find((vm) => vm.id === editingVmSettingsId) ?? null
       : null;
+  const canEditVmwareProfile = editingVmSettings?.powerState !== "ON";
 
   return (
     <div className="space-y-8 p-6">
@@ -1024,6 +1266,9 @@ export default function VMs() {
                 <span className="text-white">
                   {latestSshLogin ? formatRelativeDate(latestSshLogin) : "No SSH session yet"}
                 </span>
+              </p>
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
+                Workstation hardware inventory is cached for 12 hours and refreshed after VM create or hardware edits.
               </p>
             </div>
           </div>
@@ -1567,6 +1812,8 @@ export default function VMs() {
                 variant="secondary"
                 onClick={() => {
                   setCreateVmError("");
+                  setNewVmDraft(DEFAULT_NEW_VM_DRAFT);
+                  setCreateVmTab("guest");
                   setIsCreateVmOpen(true);
                 }}
                 className="shrink-0"
@@ -1713,6 +1960,18 @@ export default function VMs() {
                     value={vm.osVersion ?? vm.osFamily ?? "Unknown"}
                   />
                   <InfoRow
+                    label="vCPU / RAM"
+                    value={`${vm.workstationCpuCount ?? "?"} vCPU / ${formatMemoryMb(vm.workstationMemoryMb)}`}
+                  />
+                  <InfoRow
+                    label="Disks"
+                    value={formatDiskInventory(vm)}
+                  />
+                  <InfoRow
+                    label="Networks"
+                    value={formatNetworkInventory(vm)}
+                  />
+                  <InfoRow
                     label="Last updated"
                     value={vm.lastUpdatedAt ? formatRelativeDate(vm.lastUpdatedAt) : "Never"}
                   />
@@ -1842,6 +2101,28 @@ export default function VMs() {
                       <FeedIcon className="h-4 w-4" />
                     )}
                   </Button>
+                  <Button
+                    variant="danger"
+                    disabled={isDeletingVmFor === vm.id || vm.isCriticalInfrastructure}
+                    onClick={() =>
+                      setDeleteVmState({
+                        vmId: vm.id,
+                        deleteFromDisk: false,
+                      })
+                    }
+                    title={
+                      vm.isCriticalInfrastructure
+                        ? `${vm.name} is guarded as critical infrastructure`
+                        : `Delete ${vm.name}`
+                    }
+                    className="px-3"
+                  >
+                    {isDeletingVmFor === vm.id ? (
+                      <SpinnerIcon className="h-4 w-4" />
+                    ) : (
+                      <TrashIcon className="h-4 w-4" />
+                    )}
+                  </Button>
                 </div>
 
                 {!canOpenSsh && isOpeningSessionFor !== vm.id ? (
@@ -1863,11 +2144,65 @@ export default function VMs() {
             </Card>
           );
         })}
-      </div>
+        </div>
 
-      {activeSessionVm && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm">
-          <div className="h-[82vh] w-full max-w-[92rem] resize overflow-auto rounded-[1.75rem]">
+        {activeSessionVm && isSshWindowMinimized ? (
+          <div className="fixed bottom-4 right-4 z-40 w-[24rem]">
+            <Card className="border-white/10 bg-slate-950/95 p-4 shadow-[0_20px_60px_rgba(2,8,23,0.45)]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                    Minimized shell
+                  </p>
+                  <h3 className="truncate text-base font-semibold text-white">
+                    {activeSessionVm.name}
+                  </h3>
+                  <p className="truncate text-xs text-slate-400">
+                    {activeSessionVm.sshUser}@{activeSessionVm.sshHost}:{activeSessionVm.sshPort ?? 22}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={restoreSshWindow}
+                    title="Restore SSH window"
+                    className="px-3"
+                  >
+                    <ExpandIcon className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => activeSessionId && closeSshSession(activeSessionId)}
+                    title="Close session"
+                    className="px-3"
+                  >
+                    <StopIcon className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {activeSessionVm && (
+        <div
+          className={`fixed z-40 ${isSshWindowMinimized ? "pointer-events-none opacity-0" : "opacity-100"} ${
+            sshWindowMode === "expanded"
+              ? "inset-4"
+              : sshWindowMode === "compact"
+                ? "bottom-4 right-4 h-[32rem] w-[48rem] max-w-[calc(100vw-2rem)]"
+                : "inset-0 flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"
+          }`}
+        >
+          <div
+            className={`${
+              sshWindowMode === "expanded"
+                ? "h-full w-full"
+                : sshWindowMode === "compact"
+                  ? "h-full w-full"
+                  : "h-[82vh] w-full max-w-[92rem]"
+            } resize overflow-auto rounded-[1.75rem]`}
+          >
           <Card className="h-full w-full border-white/10 bg-slate-950/95">
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
@@ -1881,7 +2216,56 @@ export default function VMs() {
                   {activeSessionVm.sshUser}@{activeSessionVm.sshHost}:{activeSessionVm.sshPort ?? 22}
                 </p>
               </div>
-              <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="ghost"
+                  onClick={() => setSshFontSize((current) => Math.max(10, current - 1))}
+                  title="Zoom out terminal text"
+                  className="px-3"
+                >
+                  <ZoomOutIcon className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setSshFontSize((current) => Math.min(20, current + 1))}
+                  title="Zoom in terminal text"
+                  className="px-3"
+                >
+                  <ZoomInIcon className="h-4 w-4" />
+                </Button>
+                <div className="flex items-center rounded-2xl border border-white/10 bg-slate-900/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+                  {sshFontSize}px
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => setIsSshWindowMinimized(true)}
+                  title="Minimize SSH window"
+                  className="px-3"
+                >
+                  <MinimizeIcon className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={sshWindowMode === "compact" ? "secondary" : "ghost"}
+                  onClick={() => {
+                    setSshWindowMode("compact");
+                    setIsSshWindowMinimized(false);
+                  }}
+                  title="Shrink to compact window"
+                  className="px-3"
+                >
+                  <ShrinkIcon className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={sshWindowMode === "expanded" ? "secondary" : "ghost"}
+                  onClick={() => {
+                    setSshWindowMode((current) => (current === "expanded" ? "normal" : "expanded"));
+                    setIsSshWindowMinimized(false);
+                  }}
+                  title={sshWindowMode === "expanded" ? "Return to normal size" : "Expand SSH window"}
+                  className="px-3"
+                >
+                  <ExpandIcon className="h-4 w-4" />
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => activeSessionId && closeSshSession(activeSessionId)}
@@ -2008,7 +2392,7 @@ export default function VMs() {
                         : "pointer-events-none z-0 opacity-0"
                     }`}
                   >
-                    <SSHTerminal vmId={vm.id} active={isActive} />
+                    <SSHTerminal vmId={vm.id} active={isActive} fontSize={sshFontSize} />
                   </div>
                 );
               })}
@@ -2028,11 +2412,14 @@ export default function VMs() {
                     Add VM
                   </p>
                   <h2 className="text-2xl font-semibold text-white">
-                    Register a VM in the control plane
+                    {newVmDraft.creationMode === "provision"
+                      ? "Provision a VMware Workstation VM"
+                      : "Register an existing VMware Workstation VM"}
                   </h2>
                   <p className="max-w-2xl text-sm leading-6 text-slate-400">
-                    This adds the VM directly to the PCM database, which is now the single source of truth for VM records.
-                    Pick the OS family so update/feed workflows can choose the right command path.
+                    PCM now has two planes: guest workflows over SSH, and VMware Workstation management.
+                    Choose whether you are onboarding an existing VMX or provisioning a new VM from ISO,
+                    then fill the guest and Workstation views separately.
                   </p>
                 </div>
                 <Button
@@ -2040,9 +2427,45 @@ export default function VMs() {
                   onClick={() => {
                     setIsCreateVmOpen(false);
                     setCreateVmError("");
+                    setNewVmDraft(DEFAULT_NEW_VM_DRAFT);
+                    setCreateVmTab("guest");
                   }}
                 >
                   Close
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={newVmDraft.creationMode === "register" ? "secondary" : "ghost"}
+                  onClick={() =>
+                    setNewVmDraft((current) => ({ ...current, creationMode: "register" }))
+                  }
+                >
+                  Register existing VM
+                </Button>
+                <Button
+                  variant={newVmDraft.creationMode === "provision" ? "secondary" : "ghost"}
+                  onClick={() =>
+                    setNewVmDraft((current) => ({ ...current, creationMode: "provision" }))
+                  }
+                >
+                  Provision from ISO
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+                <Button
+                  variant={createVmTab === "guest" ? "secondary" : "ghost"}
+                  onClick={() => setCreateVmTab("guest")}
+                >
+                  Guest management
+                </Button>
+                <Button
+                  variant={createVmTab === "workstation" ? "secondary" : "ghost"}
+                  onClick={() => setCreateVmTab("workstation")}
+                >
+                  VMware management
                 </Button>
               </div>
 
@@ -2067,18 +2490,6 @@ export default function VMs() {
                       setNewVmDraft((current) => ({ ...current, name: event.target.value }))
                     }
                     placeholder="Windows Server 2025"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  />
-                </label>
-
-                <label className="space-y-2 lg:col-span-2">
-                  <span className="text-sm text-slate-300">VMX path</span>
-                  <input
-                    value={newVmDraft.vmxPath}
-                    onChange={(event) =>
-                      setNewVmDraft((current) => ({ ...current, vmxPath: event.target.value }))
-                    }
-                    placeholder="D:\Vms\WIN-SRV-2025\Windows Server 2025.vmx"
                     className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
                   />
                 </label>
@@ -2146,77 +2557,211 @@ export default function VMs() {
                 </label>
               </div>
 
-              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold text-white">SSH details</h3>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Optional, but required for live state refresh, feeds, updates, and browser SSH.
-                  </p>
+              {createVmTab === "guest" ? (
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-white">Guest management</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      SSH powers browser terminals, live state refresh, security feeds, and managed updates.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Host/IP</span>
+                      <input
+                        value={newVmDraft.sshHost}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, sshHost: event.target.value }))
+                        }
+                        placeholder="10.10.0.5"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Port</span>
+                      <input
+                        value={newVmDraft.sshPort}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, sshPort: event.target.value }))
+                        }
+                        placeholder="22"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">User</span>
+                      <input
+                        value={newVmDraft.sshUser}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, sshUser: event.target.value }))
+                        }
+                        placeholder="Administrator"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Private key path</span>
+                      <input
+                        value={newVmDraft.sshKeyPath}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, sshKeyPath: event.target.value }))
+                        }
+                        placeholder="C:\Users\Nightroo\.ssh\id_rsa"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2 lg:col-span-2">
+                      <span className="text-sm text-slate-300">Password</span>
+                      <input
+                        type="password"
+                        value={newVmDraft.sshPassword}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, sshPassword: event.target.value }))
+                        }
+                        placeholder="Optional, needed for sudo -S / Windows update jobs if using password auth"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+                  </div>
                 </div>
+              ) : (
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-white">VMware Workstation management</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Register an existing VMX or provision a new Workstation VM from ISO with CPU, RAM, disk, and network settings.
+                    </p>
+                  </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Host/IP</span>
-                    <input
-                      value={newVmDraft.sshHost}
-                      onChange={(event) =>
-                        setNewVmDraft((current) => ({ ...current, sshHost: event.target.value }))
-                      }
-                      placeholder="10.10.0.5"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {newVmDraft.creationMode === "register" ? (
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">VMX path</span>
+                        <input
+                          value={newVmDraft.vmxPath}
+                          onChange={(event) =>
+                            setNewVmDraft((current) => ({ ...current, vmxPath: event.target.value }))
+                          }
+                          placeholder="D:\Vms\WIN-SRV-2025\Windows Server 2025.vmx"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+                    ) : (
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">VM folder path</span>
+                        <input
+                          value={newVmDraft.vmFolderPath}
+                          onChange={(event) =>
+                            setNewVmDraft((current) => ({ ...current, vmFolderPath: event.target.value }))
+                          }
+                          placeholder="D:\Vms\WIN-SRV-2025"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+                    )}
 
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Port</span>
-                    <input
-                      value={newVmDraft.sshPort}
-                      onChange={(event) =>
-                        setNewVmDraft((current) => ({ ...current, sshPort: event.target.value }))
-                      }
-                      placeholder="22"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">VMware guest id</span>
+                      <input
+                        value={newVmDraft.workstationGuestId}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, workstationGuestId: event.target.value }))
+                        }
+                        placeholder="windows2022srv-64 / ubuntu-64"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
 
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">User</span>
-                    <input
-                      value={newVmDraft.sshUser}
-                      onChange={(event) =>
-                        setNewVmDraft((current) => ({ ...current, sshUser: event.target.value }))
-                      }
-                      placeholder="Administrator"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">vCPU count</span>
+                      <input
+                        value={newVmDraft.workstationCpuCount}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, workstationCpuCount: event.target.value }))
+                        }
+                        placeholder="2"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
 
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Private key path</span>
-                    <input
-                      value={newVmDraft.sshKeyPath}
-                      onChange={(event) =>
-                        setNewVmDraft((current) => ({ ...current, sshKeyPath: event.target.value }))
-                      }
-                      placeholder="C:\Users\Nightroo\.ssh\id_rsa"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Memory (MB)</span>
+                      <input
+                        value={newVmDraft.workstationMemoryMb}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, workstationMemoryMb: event.target.value }))
+                        }
+                        placeholder="4096"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
 
-                  <label className="space-y-2 lg:col-span-2">
-                    <span className="text-sm text-slate-300">Password</span>
-                    <input
-                      type="password"
-                      value={newVmDraft.sshPassword}
-                      onChange={(event) =>
-                        setNewVmDraft((current) => ({ ...current, sshPassword: event.target.value }))
-                      }
-                      placeholder="Optional, needed for sudo -S / Windows update jobs if using password auth"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Primary disk (GB)</span>
+                      <input
+                        value={newVmDraft.workstationDiskGb}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, workstationDiskGb: event.target.value }))
+                        }
+                        placeholder="60"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2 lg:col-span-2">
+                      <span className="text-sm text-slate-300">ISO path</span>
+                      <input
+                        value={newVmDraft.workstationIsoPath}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({ ...current, workstationIsoPath: event.target.value }))
+                        }
+                        placeholder="D:\ISOs\Windows-Server-2025.iso"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Network mode</span>
+                      <select
+                        value={newVmDraft.workstationNetworkMode}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({
+                            ...current,
+                            workstationNetworkMode: event.target.value as NonNullable<CreateVmPayload["workstationNetworkMode"]>,
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      >
+                        {VMWARE_NETWORK_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">vmnet label</span>
+                      <input
+                        value={newVmDraft.workstationNetworkLabel}
+                        onChange={(event) =>
+                          setNewVmDraft((current) => ({
+                            ...current,
+                            workstationNetworkLabel: event.target.value,
+                          }))
+                        }
+                        placeholder="vmnet2"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {createVmError ? (
                 <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -2230,6 +2775,8 @@ export default function VMs() {
                   onClick={() => {
                     setIsCreateVmOpen(false);
                     setCreateVmError("");
+                    setNewVmDraft(DEFAULT_NEW_VM_DRAFT);
+                    setCreateVmTab("guest");
                   }}
                 >
                   Cancel
@@ -2239,7 +2786,13 @@ export default function VMs() {
                   disabled={isCreatingVm}
                   onClick={() => void saveNewVm()}
                 >
-                  {isCreatingVm ? "Adding..." : "Add VM"}
+                  {isCreatingVm
+                    ? newVmDraft.creationMode === "provision"
+                      ? "Provisioning..."
+                      : "Registering..."
+                    : newVmDraft.creationMode === "provision"
+                      ? "Provision VM"
+                      : "Register VM"}
                 </Button>
               </div>
             </div>
@@ -2260,8 +2813,8 @@ export default function VMs() {
                     {editingVmSettings.name}
                   </h2>
                   <p className="max-w-2xl text-sm leading-6 text-slate-400">
-                    Update the database record that drives VMware actions, SSH, refresh-state,
-                    security feeds, and OS-specific workflows. Password stays unchanged unless you enter a new one.
+                    Split VM changes by plane: guest workflows over SSH, or VMware Workstation hardware/profile management.
+                    Password stays unchanged unless you enter a new one.
                   </p>
                 </div>
                 <Button
@@ -2270,6 +2823,7 @@ export default function VMs() {
                     setEditingVmSettingsId(null);
                     setVmSettingsError("");
                     setVmSettingsDraft(DEFAULT_VM_SETTINGS_DRAFT);
+                    setEditVmTab("guest");
                   }}
                 >
                   Close
@@ -2280,163 +2834,390 @@ export default function VMs() {
                 VM id: <span className="font-semibold text-white">{editingVmSettings.id}</span>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-300">Display name</span>
-                  <input
-                    value={vmSettingsDraft.name}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({ ...current, name: event.target.value }))
-                    }
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  />
-                </label>
-
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-300">VM type</span>
-                  <select
-                    value={vmSettingsDraft.type}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({
-                        ...current,
-                        type: event.target.value as CreateVmPayload["type"],
-                      }))
-                    }
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  >
-                    <option value="PERSISTENT">Persistent</option>
-                    <option value="TEMPLATE">Template</option>
-                    <option value="EPHEMERAL">Ephemeral</option>
-                  </select>
-                </label>
-
-                <label className="space-y-2 lg:col-span-2">
-                  <span className="text-sm text-slate-300">VMX path</span>
-                  <input
-                    value={vmSettingsDraft.vmxPath}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({ ...current, vmxPath: event.target.value }))
-                    }
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  />
-                </label>
-
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-300">OS family</span>
-                  <select
-                    value={vmSettingsDraft.osFamily}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({
-                        ...current,
-                        osFamily: event.target.value as NonNullable<CreateVmPayload["osFamily"]>,
-                      }))
-                    }
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  >
-                    {OS_FAMILY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-2">
-                  <span className="text-sm text-slate-300">OS version</span>
-                  <input
-                    value={vmSettingsDraft.osVersion}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({ ...current, osVersion: event.target.value }))
-                    }
-                    placeholder="Windows Server 2025 / Ubuntu 24.04"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  />
-                </label>
-
-                <label className="space-y-2 lg:col-span-2">
-                  <span className="text-sm text-slate-300">Tags</span>
-                  <input
-                    value={vmSettingsDraft.tags}
-                    onChange={(event) =>
-                      setVmSettingsDraft((current) => ({ ...current, tags: event.target.value }))
-                    }
-                    placeholder="gateway, security, vpn"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                  />
-                </label>
+              <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+                <Button
+                  variant={editVmTab === "guest" ? "secondary" : "ghost"}
+                  onClick={() => setEditVmTab("guest")}
+                >
+                  Guest management
+                </Button>
+                <Button
+                  variant={editVmTab === "workstation" ? "secondary" : "ghost"}
+                  onClick={() => setEditVmTab("workstation")}
+                >
+                  VMware management
+                </Button>
               </div>
 
-              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold text-white">SSH and guest workflow details</h3>
-                  <p className="mt-1 text-xs text-slate-400">
-                    These fields power browser SSH, refresh-state, security feeds, and update jobs.
-                  </p>
+              {editVmTab === "guest" ? (
+                <>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">Display name</span>
+                      <input
+                        value={vmSettingsDraft.name}
+                        onChange={(event) =>
+                          setVmSettingsDraft((current) => ({ ...current, name: event.target.value }))
+                        }
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">VM type</span>
+                      <select
+                        value={vmSettingsDraft.type}
+                        onChange={(event) =>
+                          setVmSettingsDraft((current) => ({
+                            ...current,
+                            type: event.target.value as CreateVmPayload["type"],
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      >
+                        <option value="PERSISTENT">Persistent</option>
+                        <option value="TEMPLATE">Template</option>
+                        <option value="EPHEMERAL">Ephemeral</option>
+                      </select>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">OS family</span>
+                      <select
+                        value={vmSettingsDraft.osFamily}
+                        onChange={(event) =>
+                          setVmSettingsDraft((current) => ({
+                            ...current,
+                            osFamily: event.target.value as NonNullable<CreateVmPayload["osFamily"]>,
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      >
+                        {OS_FAMILY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm text-slate-300">OS version</span>
+                      <input
+                        value={vmSettingsDraft.osVersion}
+                        onChange={(event) =>
+                          setVmSettingsDraft((current) => ({ ...current, osVersion: event.target.value }))
+                        }
+                        placeholder="Windows Server 2025 / Ubuntu 24.04"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+
+                    <label className="space-y-2 lg:col-span-2">
+                      <span className="text-sm text-slate-300">Tags</span>
+                      <input
+                        value={vmSettingsDraft.tags}
+                        onChange={(event) =>
+                          setVmSettingsDraft((current) => ({ ...current, tags: event.target.value }))
+                        }
+                        placeholder="gateway, security, vpn"
+                        className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+                    <div className="mb-4">
+                      <h3 className="text-sm font-semibold text-white">SSH and guest workflow details</h3>
+                      <p className="mt-1 text-xs text-slate-400">
+                        These fields power browser SSH, refresh-state, security feeds, and update jobs.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Host/IP</span>
+                        <input
+                          value={vmSettingsDraft.sshHost}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, sshHost: event.target.value }))
+                          }
+                          placeholder="10.10.0.5"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Port</span>
+                        <input
+                          value={vmSettingsDraft.sshPort}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, sshPort: event.target.value }))
+                          }
+                          placeholder="22"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">User</span>
+                        <input
+                          value={vmSettingsDraft.sshUser}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, sshUser: event.target.value }))
+                          }
+                          placeholder="Administrator"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Private key path</span>
+                        <input
+                          value={vmSettingsDraft.sshKeyPath}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, sshKeyPath: event.target.value }))
+                          }
+                          placeholder="Leave empty if password auth is used"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">Password</span>
+                        <input
+                          type="password"
+                          value={vmSettingsDraft.sshPassword}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, sshPassword: event.target.value }))
+                          }
+                          placeholder="Leave blank to keep the stored password unchanged"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-white">VMware Workstation profile</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Power the VM off before applying CPU, memory, ISO, and network changes through the Workstation plane.
+                    </p>
+                  </div>
+
+                  {!canEditVmwareProfile ? (
+                    <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                      This VM is running. VMware hardware edits are locked until it is powered off.
+                    </div>
+                  ) : null}
+
+                  <fieldset disabled={!canEditVmwareProfile} className={!canEditVmwareProfile ? "opacity-60" : undefined}>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">VMX path</span>
+                        <input
+                          value={vmSettingsDraft.vmxPath}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, vmxPath: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">VM folder path</span>
+                        <input
+                          value={vmSettingsDraft.vmFolderPath}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, vmFolderPath: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">VMware guest id</span>
+                        <input
+                          value={vmSettingsDraft.workstationGuestId}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, workstationGuestId: event.target.value }))
+                          }
+                          placeholder="windows2022srv-64 / ubuntu-64"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Display name in Workstation</span>
+                        <input
+                          value={vmSettingsDraft.name}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, name: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">vCPU count</span>
+                        <input
+                          value={vmSettingsDraft.workstationCpuCount}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, workstationCpuCount: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Memory (MB)</span>
+                        <input
+                          value={vmSettingsDraft.workstationMemoryMb}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, workstationMemoryMb: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Primary disk (GB)</span>
+                        <input
+                          value={vmSettingsDraft.workstationDiskGb}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, workstationDiskGb: event.target.value }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2 lg:col-span-2">
+                        <span className="text-sm text-slate-300">ISO path</span>
+                        <input
+                          value={vmSettingsDraft.workstationIsoPath}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({ ...current, workstationIsoPath: event.target.value }))
+                          }
+                          placeholder="Leave empty to eject the ISO"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">Network mode</span>
+                        <select
+                          value={vmSettingsDraft.workstationNetworkMode}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({
+                              ...current,
+                              workstationNetworkMode: event.target.value as NonNullable<CreateVmPayload["workstationNetworkMode"]>,
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        >
+                          {VMWARE_NETWORK_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-sm text-slate-300">vmnet label</span>
+                        <input
+                          value={vmSettingsDraft.workstationNetworkLabel}
+                          onChange={(event) =>
+                            setVmSettingsDraft((current) => ({
+                              ...current,
+                              workstationNetworkLabel: event.target.value,
+                            }))
+                          }
+                          placeholder="vmnet2"
+                          className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-80"
+                        />
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h4 className="text-sm font-semibold text-white">Live disk inventory</h4>
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                          {editingVmSettings.workstationDisks?.length ?? 0} attached
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {(editingVmSettings.workstationDisks ?? []).length > 0 ? (
+                          (editingVmSettings.workstationDisks ?? []).map((disk) => (
+                            <div
+                              key={disk.key}
+                              className="rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-sm text-slate-300"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="font-medium text-white">{disk.controller}:{disk.unit}</span>
+                                <span className="text-xs text-slate-400">
+                                  {disk.sizeGb ? `${disk.sizeGb} GB` : "size n/a"}
+                                </span>
+                              </div>
+                              <div className="mt-1 break-all text-xs text-slate-400">
+                                {disk.fileName ?? "No backing file"}
+                                {disk.deviceType ? ` • ${disk.deviceType}` : ""}
+                                {disk.mode ? ` • ${disk.mode}` : ""}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-400">
+                            No attached virtual disks were discovered from the VMX.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h4 className="text-sm font-semibold text-white">Live network interfaces</h4>
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                          {editingVmSettings.workstationNetworkInterfaces?.length ?? 0} adapters
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {(editingVmSettings.workstationNetworkInterfaces ?? []).length > 0 ? (
+                          (editingVmSettings.workstationNetworkInterfaces ?? []).map((nic) => (
+                            <div
+                              key={nic.key}
+                              className="rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3 text-sm text-slate-300"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="font-medium text-white">eth{nic.index}</span>
+                                <span className="text-xs text-slate-400">
+                                  {nic.mode ?? nic.connectionType ?? "unknown"}
+                                </span>
+                              </div>
+                              <div className="mt-1 break-all text-xs text-slate-400">
+                                {nic.label ? `${nic.label} • ` : ""}
+                                {nic.virtualDev ?? "adapter n/a"}
+                                {nic.macAddress ? ` • ${nic.macAddress}` : ""}
+                                {nic.startConnected === true ? " • autoconnect" : ""}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-400">
+                            No virtual NICs were discovered from the VMX.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Host/IP</span>
-                    <input
-                      value={vmSettingsDraft.sshHost}
-                      onChange={(event) =>
-                        setVmSettingsDraft((current) => ({ ...current, sshHost: event.target.value }))
-                      }
-                      placeholder="10.10.0.5"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
-
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Port</span>
-                    <input
-                      value={vmSettingsDraft.sshPort}
-                      onChange={(event) =>
-                        setVmSettingsDraft((current) => ({ ...current, sshPort: event.target.value }))
-                      }
-                      placeholder="22"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
-
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">User</span>
-                    <input
-                      value={vmSettingsDraft.sshUser}
-                      onChange={(event) =>
-                        setVmSettingsDraft((current) => ({ ...current, sshUser: event.target.value }))
-                      }
-                      placeholder="Administrator"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
-
-                  <label className="space-y-2">
-                    <span className="text-sm text-slate-300">Private key path</span>
-                    <input
-                      value={vmSettingsDraft.sshKeyPath}
-                      onChange={(event) =>
-                        setVmSettingsDraft((current) => ({ ...current, sshKeyPath: event.target.value }))
-                      }
-                      placeholder="Leave empty if password auth is used"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
-
-                  <label className="space-y-2 lg:col-span-2">
-                    <span className="text-sm text-slate-300">Password</span>
-                    <input
-                      type="password"
-                      value={vmSettingsDraft.sshPassword}
-                      onChange={(event) =>
-                        setVmSettingsDraft((current) => ({ ...current, sshPassword: event.target.value }))
-                      }
-                      placeholder="Leave blank to keep the stored password unchanged"
-                      className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none transition focus:border-teal-400"
-                    />
-                  </label>
-                </div>
-              </div>
+              )}
 
               {vmSettingsError ? (
                 <p className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -2451,16 +3232,31 @@ export default function VMs() {
                     setEditingVmSettingsId(null);
                     setVmSettingsError("");
                     setVmSettingsDraft(DEFAULT_VM_SETTINGS_DRAFT);
+                    setEditVmTab("guest");
                   }}
                 >
                   Cancel
                 </Button>
                 <Button
                   variant="secondary"
-                  disabled={isSavingVmSettings}
-                  onClick={() => void saveVmSettings(editingVmSettings)}
+                  disabled={
+                    editVmTab === "guest"
+                      ? isSavingVmSettings
+                      : isSavingVmwareProfile || !canEditVmwareProfile
+                  }
+                  onClick={() =>
+                    void (editVmTab === "guest"
+                      ? saveVmSettings(editingVmSettings)
+                      : saveVmwareSettings(editingVmSettings))
+                  }
                 >
-                  {isSavingVmSettings ? "Saving..." : "Save VM settings"}
+                  {editVmTab === "guest"
+                    ? isSavingVmSettings
+                      ? "Saving..."
+                      : "Save guest settings"
+                    : isSavingVmwareProfile
+                      ? "Applying..."
+                      : "Apply Workstation profile"}
                 </Button>
               </div>
             </div>
@@ -2762,6 +3558,79 @@ export default function VMs() {
                     {isSavingLabStack ? "Saving..." : "Save lab stack"}
                   </Button>
                 </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
+      {deleteVmState ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl border-white/10 bg-slate-950">
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
+                  Delete VM
+                </p>
+                <h2 className="text-2xl font-semibold text-white">
+                  {data.find((vm) => vm.id === deleteVmState.vmId)?.name ?? deleteVmState.vmId}
+                </h2>
+                <p className="text-sm leading-6 text-slate-400">
+                  By default this removes the VM from PCM only. If you check the box below, PCM will also call VMware Workstation to delete the VM from disk exactly like a full delete action through Workstation.
+                </p>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-300">
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={deleteVmState.deleteFromDisk}
+                    onChange={(event) =>
+                      setDeleteVmState((current) =>
+                        current
+                          ? {
+                              ...current,
+                              deleteFromDisk: event.target.checked,
+                            }
+                          : current,
+                      )
+                    }
+                    className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950"
+                  />
+                  <span>
+                    Also delete this VM from disk through VMware Workstation.
+                  </span>
+                </label>
+                {deleteVmState.deleteFromDisk ? (
+                  <p className="text-xs text-rose-200/90">
+                    This is destructive. The VM must be powered off first, and VMware will remove it from disk.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-400">
+                    This keeps the VM files on disk and only removes the record from PCM.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3">
+                <Button variant="ghost" onClick={() => setDeleteVmState(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={
+                    isDeletingVmFor === deleteVmState.vmId ||
+                    !data.find((vm) => vm.id === deleteVmState.vmId)
+                  }
+                  onClick={() => {
+                    const vm = data.find((candidate) => candidate.id === deleteVmState.vmId);
+                    if (vm) {
+                      void queueVmDelete(vm, deleteVmState.deleteFromDisk);
+                    }
+                  }}
+                >
+                  {isDeletingVmFor === deleteVmState.vmId ? "Deleting..." : deleteVmState.deleteFromDisk ? "Delete from disk" : "Remove from PCM"}
+                </Button>
               </div>
             </div>
           </Card>
@@ -3823,6 +4692,18 @@ function PencilIcon({ className }: { className?: string }) {
   );
 }
 
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M5.5 7.5h13" />
+      <path d="M9 7.5V5.75A1.25 1.25 0 0 1 10.25 4.5h2.5A1.25 1.25 0 0 1 14 5.75V7.5" />
+      <path d="M7.5 7.5 8.2 18a1.5 1.5 0 0 0 1.5 1.4h4.6a1.5 1.5 0 0 0 1.5-1.4l.7-10.5" />
+      <path d="M10 10.5v5.5" />
+      <path d="M14 10.5v5.5" />
+    </IconBase>
+  );
+}
+
 function RefreshIcon({ className }: { className?: string }) {
   return (
     <IconBase className={className}>
@@ -3849,6 +4730,61 @@ function FeedIcon({ className }: { className?: string }) {
       <path d="M5 18.5a1.5 1.5 0 1 0 0.01 0" />
       <path d="M5 11.5a7 7 0 0 1 7 7" />
       <path d="M5 6.5c6.63 0 12 5.37 12 12" />
+    </IconBase>
+  );
+}
+
+function MinimizeIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M6 16.5h12" />
+    </IconBase>
+  );
+}
+
+function ExpandIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M8 5.5H5.5V8" />
+      <path d="M16 5.5h2.5V8" />
+      <path d="M8 18.5H5.5V16" />
+      <path d="M16 18.5h2.5V16" />
+      <path d="M5.5 8 9 4.5" />
+      <path d="m15 4.5 3.5 3.5" />
+      <path d="m5.5 16 3.5 3.5" />
+      <path d="m15 19.5 3.5-3.5" />
+    </IconBase>
+  );
+}
+
+function ShrinkIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M9 9.5H5.5V6" />
+      <path d="m5.5 9.5 4-4" />
+      <path d="M15 14.5h3.5V18" />
+      <path d="m18.5 14.5-4 4" />
+    </IconBase>
+  );
+}
+
+function ZoomInIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <circle cx="11" cy="11" r="5.5" />
+      <path d="M11 8.5v5" />
+      <path d="M8.5 11h5" />
+      <path d="m16 16 3 3" />
+    </IconBase>
+  );
+}
+
+function ZoomOutIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <circle cx="11" cy="11" r="5.5" />
+      <path d="M8.5 11h5" />
+      <path d="m16 16 3 3" />
     </IconBase>
   );
 }
@@ -3918,6 +4854,49 @@ function formatLastOnline(vm: VmRecord) {
   }
 
   return "Never detected online";
+}
+
+function formatMemoryMb(value?: number | null) {
+  if (!value || value <= 0) {
+    return "Unknown";
+  }
+
+  if (value % 1024 === 0) {
+    return `${value / 1024} GB`;
+  }
+
+  return `${value} MB`;
+}
+
+function formatDiskInventory(vm: VmRecord) {
+  const disks = vm.workstationDisks ?? [];
+  if (disks.length === 0) {
+    return vm.workstationDiskGb ? `${vm.workstationDiskGb} GB` : "Unknown";
+  }
+
+  return disks
+    .map((disk) => {
+      const size = disk.sizeGb ? `${disk.sizeGb} GB` : "size n/a";
+      return `${disk.controller}:${disk.unit} ${size}`;
+    })
+    .join(", ");
+}
+
+function formatNetworkInventory(vm: VmRecord) {
+  const interfaces = vm.workstationNetworkInterfaces ?? [];
+  if (interfaces.length === 0) {
+    if (vm.workstationNetworkMode) {
+      return `${vm.workstationNetworkMode}${vm.workstationNetworkLabel ? ` (${vm.workstationNetworkLabel})` : ""}`;
+    }
+    return "Unknown";
+  }
+
+  return interfaces
+    .map((nic) => {
+      const mode = nic.mode ?? nic.connectionType ?? "unknown";
+      return `eth${nic.index} ${mode}${nic.label ? ` (${nic.label})` : ""}`;
+    })
+    .join(", ");
 }
 
 function isWithinWindow(value: string | null | undefined, hours: number) {

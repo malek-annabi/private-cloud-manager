@@ -33,7 +33,9 @@ It combines:
 - Clickable reboot-required badge with soft/hard reboot actions
 - Cyber news feed with modal story view and curated RSS aggregation
 - Fixed in-view navigation for jumping between overview, charts, runbooks, SSH, and inventory
-- UI-based VM registration with generic OS family selection for workflow command routing
+- Two-plane VM management with separate Guest and VMware Workstation views
+- UI-based VM registration for existing VMX paths plus VMware Workstation provisioning from ISO with CPU, RAM, disk, and network inputs
+- Delete VM flow with an explicit choice between PCM-only removal and full VMware Workstation delete-from-disk
 - OpenClaw integration on top of the same backend used by the UI
 
 ## Why I Built It
@@ -80,6 +82,7 @@ Responsibilities:
 - show jobs, logs, and audit activity
 - show job volume and API traffic telemetry
 - let operators update SSH connection details
+- let operators manage VMware Workstation profile data such as CPU, memory, ISO, and network mode
 - trigger managed Linux and Windows server updates
 - refresh OS family, version, and reboot-needed state on SSH connect
 - provide a multi-session browser SSH workspace
@@ -93,6 +96,7 @@ Responsibilities:
 - persist VM inventory directly in the database
 - expose VM, job, audit, and readiness APIs
 - execute VMware operations through `vmrun`
+- provision VMware Workstation VMs from ISO-backed specs and persist separate Workstation profile metadata
 - run managed Linux and Windows update jobs
 - refresh remote OS metadata on successful interactive SSH login
 - expose lightweight in-memory API traffic metrics for dashboard charts
@@ -106,12 +110,15 @@ OpenClaw plugin that exposes the backend as tools:
 
 - `pcm_list_vms`
 - `pcm_create_vm`
+- `pcm_update_vm_settings`
+- `pcm_delete_vm`
 - `pcm_start_vm`
 - `pcm_stop_vm`
 - `pcm_ssh_exec`
 - `pcm_get_job_status`
 - `pcm_update_vm`
 - `pcm_get_update_feed`
+- `pcm_update_vm_workstation`
 - `pcm_rotate_security_updates`
 - `pcm_fire_lab`
 - `pcm_stop_lab`
@@ -149,6 +156,7 @@ You can add and edit VMs from:
 - the web UI
 - the `POST /api/vms` and `PATCH /api/vms/:id/settings` APIs
 - OpenClaw tools such as `pcm_create_vm` and `pcm_update_vm_settings`
+- OpenClaw tools such as `pcm_create_vm`, `pcm_update_vm_settings`, `pcm_update_vm_workstation`, and `pcm_delete_vm`
 
 ## Project Structure
 
@@ -315,6 +323,8 @@ Add the PCM tools to the OpenClaw agent allowlist:
 [
   "pcm_list_vms",
   "pcm_create_vm",
+  "pcm_update_vm_settings",
+  "pcm_delete_vm",
   "pcm_start_vm",
   "pcm_stop_vm",
   "pcm_ssh_exec",
@@ -356,6 +366,8 @@ These files do not make the tools work, but they improve consistency and reduce 
 
 - `Use pcm_list_vms to list my VMs. Do not use exec.`
 - `Use pcm_create_vm with id "win-srv-2025", name "Windows Server 2025", vmxPath "D:\\Vms\\WIN-SRV-2025\\Windows Server 2025.vmx", osFamily "windows", sshHost "10.10.0.5", sshUser "Administrator". Do not use exec.`
+- `Use pcm_delete_vm with vmId "old-lab-vm". Do not use exec.`
+- `Use pcm_delete_vm with vmId "old-template" and deleteFromDisk true. Do not use exec.`
 - `Use pcm_stop_vm with vmId "wireguard". Do not use exec.`
 - `Use pcm_get_job_status with a job id returned by the backend.`
 - `Use pcm_update_vm with vmId "kali-01". Do not use exec.`

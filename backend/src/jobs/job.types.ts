@@ -10,6 +10,7 @@ export type JobType =
   | "VM_START"
   | "VM_STOP"
   | "VM_REBOOT"
+  | "VM_DELETE"
   | "VM_SNAPSHOT"
   | "VM_SSH_EXEC"
   | "VM_OS_UPDATE";
@@ -21,5 +22,6 @@ export interface JobPayload {
   mode?: "security" | "full";
   autoremove?: boolean;
   rebootMode?: "soft" | "hard";
+  deleteFromDisk?: boolean;
 }
 

@@ -193,18 +193,6 @@
       }
     },
     {
-      "id": "dolibarr",
-      "name": "Dolibarr",
-      "vmxPath": "E:\\Vms\\Dolibar\\Dolibar.vmx",
-      "type": "PERSISTENT",
-      "ssh": {
-        "host": "10.10.0.XX",
-        "port": 22,
-        "user": "root",
-        "password": "yourpassword"
-      }
-    },
-    {
       "id": "islem",
       "name": "Islem",
       "vmxPath": "E:\\Vms\\New folder\\Islem.vmx",

@@ -5,8 +5,10 @@ This plugin lets OpenClaw call the existing private-cloud-manager backend as a s
 ## Tools
 
 - `pcm_list_vms`: inventory and state queries such as “which VMs are online?”, “what VMs do I have?”, or “which VM is the firewall?”
-- `pcm_create_vm`: add/register a new VM record in PCM
+- `pcm_create_vm`: add/register a VM record in PCM or provision a VMware Workstation VM from ISO-backed settings
 - `pcm_update_vm_settings`: edit an existing VM record, including VMX path, OS family, tags, and SSH settings
+- `pcm_update_vm_workstation`: edit the VMware Workstation management plane for a VM, such as CPU, memory, ISO, and network profile
+- `pcm_delete_vm`: remove a VM from PCM only or fully delete a powered-off VM from disk through VMware Workstation
 - `pcm_start_vm`: power on a VM
 - `pcm_stop_vm`: power off a VM
 - `pcm_ssh_exec`: run a one-off SSH command through the backend job path
@@ -25,6 +27,8 @@ These tools call the backend routes that already exist today:
 - `GET /api/vms`
 - `POST /api/vms`
 - `PATCH /api/vms/:id/settings`
+- `PATCH /api/vms/:id/workstation-profile`
+- `POST /api/jobs/delete-vm`
 - `POST /api/jobs/start-vm`
 - `POST /api/jobs/stop-vm`
 - `POST /api/jobs/ssh`
@@ -43,6 +47,9 @@ Examples:
 
 - “Which VMs are online right now?” -> `pcm_list_vms`
 - “Start the WireGuard box” -> `pcm_start_vm`
+- “Remove the old lab VM from inventory” -> `pcm_delete_vm`
+- “Delete the powered-off template from disk” -> `pcm_delete_vm`
+- “Set the Windows VM to 4 vCPUs and 8 GB RAM” -> `pcm_update_vm_workstation`
 - “Stop the Kali VM” -> `pcm_stop_vm`
 - “Run `ip a` on wireguard” -> `pcm_ssh_exec`
 - “Did that update job fail?” -> `pcm_get_job_status`
@@ -109,6 +116,8 @@ Also allow the individual PCM tools for the agent that should use them:
             "pcm_list_vms",
             "pcm_create_vm",
             "pcm_update_vm_settings",
+            "pcm_update_vm_workstation",
+            "pcm_delete_vm",
             "pcm_start_vm",
             "pcm_stop_vm",
             "pcm_ssh_exec",
@@ -196,7 +205,10 @@ These files improve consistency, but they are not what makes the plugin function
 
 - `pcm_ssh_exec` still goes through your backend approval and SSH policy logic.
 - `pcm_create_vm` registers a VM directly in the PCM database, which is now the source of truth for inventory.
+- `pcm_create_vm` can also provision a VMware Workstation VM from ISO-backed settings when `creationMode` is `provision`.
 - `pcm_update_vm_settings` updates the database record for an existing VM, including VMX path, OS family, tags, and SSH workflow fields.
+- `pcm_update_vm_workstation` updates the VMware Workstation management plane for an existing VM, including CPU, memory, ISO, and network profile fields.
+- `pcm_delete_vm` can either remove a VM from the PCM database only or queue a full delete-from-disk action through VMware Workstation for a powered-off VM.
 - SSH passwords supplied through these tools are treated as write-only inputs by the backend and stored in encrypted form for later backend workflows.
 - `pcm_start_vm` and `pcm_stop_vm` create normal backend jobs, so the dashboard and OpenClaw stay in sync.
 - `pcm_update_vm` queues a managed update job for Ubuntu, Debian, Kali, or Windows through the same backend job and audit flow.

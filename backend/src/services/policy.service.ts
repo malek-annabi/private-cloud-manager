@@ -5,7 +5,7 @@ export function isCriticalInfrastructureVm(vm: any) {
 }
 
 export function canDeleteVM(vm: any) {
-  return vm.type === "EPHEMERAL";
+  return !isCriticalInfrastructureVm(vm);
 }
 
 export function canExecuteSSH(vm: any) {

@@ -19,6 +19,8 @@ The backend is responsible for:
 - storing and serving the database-backed VM inventory
 - exposing VM, job, audit, and readiness APIs
 - executing VMware lifecycle operations
+- provisioning VMware Workstation VMs from ISO-backed specs and applying Workstation hardware/profile changes
+- deleting VMs either from PCM only or from disk through VMware Workstation when explicitly requested
 - running background job handlers
 - exposing interactive SSH sessions over WebSocket
 - persisting job logs and audit events
@@ -33,6 +35,8 @@ The backend is responsible for:
 - `GET /api/vms`
 - `GET /api/vms/:id`
 - `POST /api/vms`
+- `PATCH /api/vms/:id/settings`
+- `PATCH /api/vms/:id/workstation-profile`
 - `GET /api/vms/:id/ssh-ready`
 - `GET /api/vms/:id/update-feed`
 - `PATCH /api/vms/:id/tags`
@@ -41,6 +45,7 @@ The backend is responsible for:
 - `GET /api/jobs/:id`
 - `POST /api/jobs/start-vm`
 - `POST /api/jobs/stop-vm`
+- `POST /api/jobs/delete-vm`
 - `POST /api/jobs/ssh`
 - `POST /api/jobs/update-vm`
 - `GET /api/audit`
@@ -64,6 +69,8 @@ The main records are:
 The `VM` record is the source of truth for your inventory. It stores:
 
 - the registered VM identity and VMware path
+- guest-management metadata such as SSH and OS family
+- VMware Workstation profile metadata such as folder path, CPU, memory, disk target, ISO, and network mode
 - live power state derived from VMware
 - SSH connection details that can be edited from the UI
 - activity metadata such as `lastSeenOnlineAt` and `lastSshLoginAt`
@@ -97,6 +104,7 @@ http://127.0.0.1:8000
 - `GET /api/metrics/traffic` gives in-memory frontend/backend API traffic buckets for the dashboard
 - `FG-VM` is treated as critical lab infrastructure and routine stop actions are guarded unless an explicit override is provided
 - VM SSH passwords are no longer returned from the API; they are stored separately in encrypted form and looked up only when a backend workflow needs them
+- `POST /api/jobs/delete-vm` supports both PCM-only removal and a full delete-from-disk path through VMware Workstation for powered-off VMs
 
 ## Setup Checklist
 
@@ -106,6 +114,7 @@ http://127.0.0.1:8000
 4. Add VMs through the UI or `POST /api/vms`
 5. For SSH-enabled workflows, fill in host/user/port plus password or private key path
 6. Set `osFamily` and optional `osVersion` so update and feed workflows choose the right command path
+7. For Workstation provisioning and hardware profile edits, make sure `vmware-vdiskmanager.exe` is also available at the adapter path
 
 ## Secret Storage
 

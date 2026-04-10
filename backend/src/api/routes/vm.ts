@@ -3,7 +3,14 @@ import { prisma } from "../../core/prisma";
 import { vmIdSchema } from "../../validators/vm.validator";
 import { auditMiddleware } from "../middleware/audit";
 import { z } from "zod";
-import { getVmPowerState, listRunningVMs } from "../../adapters/vmware.adapter";
+import {
+  applyVmwareProfile,
+  getVmPowerState,
+  inspectVmwareProfile,
+  listRunningVMs,
+  provisionVmFromIso,
+  type VmwareNetworkMode,
+} from "../../adapters/vmware.adapter";
 import { logger } from "../../core/logger";
 import net from "net";
 import { isCriticalInfrastructureVm } from "../../services/policy.service";
@@ -13,6 +20,10 @@ import {
   getVmSshPassword,
   setVmSshPassword,
 } from "../../services/vm-secret.service";
+import {
+  getCachedVmwareProfile,
+  invalidateVmwareProfileCache,
+} from "../../services/vmware-profile-cache.service";
 
 const router = Router();
 type VmWithTags = Awaited<ReturnType<typeof prisma.vM.findMany>>[number] & {
@@ -35,11 +46,28 @@ const osFamilySchema = z
   .enum(["ubuntu", "debian", "kali", "windows", "fortigate", "other"])
   .nullable()
   .optional();
+const workstationNetworkModeSchema = z
+  .enum(["nat", "bridged", "hostonly", "custom"])
+  .nullable()
+  .optional();
+const workstationCreateModeSchema = z.enum(["register", "provision"]).default("register");
 
-const createVmSchema = z.object({
+const workstationProfileSchema = z.object({
+  workstationGuestId: z.string().trim().max(120).optional().or(z.literal("")),
+  workstationCpuCount: z.number().int().min(1).max(64).nullable().optional(),
+  workstationMemoryMb: z.number().int().min(256).max(1048576).nullable().optional(),
+  workstationDiskGb: z.number().int().min(8).max(8192).nullable().optional(),
+  workstationIsoPath: z.string().trim().max(1024).optional().or(z.literal("")),
+  workstationNetworkMode: workstationNetworkModeSchema,
+  workstationNetworkLabel: z.string().trim().max(120).optional().or(z.literal("")),
+});
+
+const vmInputBaseSchema = z.object({
+  creationMode: workstationCreateModeSchema.optional(),
   id: z.string().trim().min(1).max(100),
   name: z.string().trim().min(1).max(160),
-  vmxPath: z.string().trim().min(1).max(1024),
+  vmxPath: z.string().trim().max(1024).optional().or(z.literal("")),
+  vmFolderPath: z.string().trim().max(1024).optional().or(z.literal("")),
   type: z.enum(["PERSISTENT", "TEMPLATE", "EPHEMERAL"]).default("PERSISTENT"),
   tags: z.array(z.string().trim().min(1).max(24)).max(12).optional(),
   osFamily: osFamilySchema,
@@ -49,10 +77,46 @@ const createVmSchema = z.object({
   sshUser: z.string().trim().max(100).optional().or(z.literal("")),
   sshKeyPath: z.string().trim().max(1024).optional().or(z.literal("")),
   sshPassword: z.string().max(512).optional().or(z.literal("")),
+}).merge(workstationProfileSchema);
+
+const createVmSchema = vmInputBaseSchema.superRefine((payload, ctx) => {
+  const creationMode = payload.creationMode ?? "register";
+
+  if (creationMode === "register" && !payload.vmxPath?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["vmxPath"],
+      message: "VMX path is required when registering an existing VM.",
+    });
+  }
+
+  if (creationMode === "provision") {
+    if (!payload.vmFolderPath?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["vmFolderPath"],
+        message: "VM folder path is required when provisioning a VMware Workstation VM.",
+      });
+    }
+
+    if (!payload.workstationDiskGb) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["workstationDiskGb"],
+        message: "Primary disk size is required when provisioning from ISO.",
+      });
+    }
+  }
 });
 
-const updateVmSettingsSchema = createVmSchema.omit({ id: true }).extend({
+const updateVmSettingsSchema = vmInputBaseSchema.omit({ id: true }).extend({
   sshPassword: z.string().max(512).optional(),
+});
+
+const updateVmwareProfileSchema = workstationProfileSchema.extend({
+  name: z.string().trim().min(1).max(160),
+  vmxPath: z.string().trim().min(1).max(1024),
+  vmFolderPath: z.string().trim().max(1024).optional().or(z.literal("")),
 });
 
 const updateFeedQuerySchema = z.object({
@@ -152,8 +216,19 @@ function normalizeTags(tags: string[]): string[] {
   return Array.from(new Set(tags.map((tag) => tag.trim()).filter(Boolean)));
 }
 
-function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
+async function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
   const inferredOsFamily = inferOsFamilyFromVm(vm);
+  let workstationProfile = null;
+  let workstationProfileScannedAt: string | null = null;
+
+  try {
+    const cachedProfile = await getCachedVmwareProfile(vm.vmxPath, () => inspectVmwareProfile(vm.vmxPath));
+    workstationProfile = cachedProfile.snapshot;
+    workstationProfileScannedAt = cachedProfile.scannedAt;
+  } catch {
+    workstationProfile = null;
+    workstationProfileScannedAt = null;
+  }
 
   return {
     id: vm.id,
@@ -171,6 +246,17 @@ function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
     sshUser: vm.sshUser,
     sshKeyPath: vm.sshKeyPath,
     createdAt: vm.createdAt,
+    vmFolderPath: vm.vmFolderPath,
+    workstationGuestId: workstationProfile?.guestId ?? vm.workstationGuestId,
+    workstationCpuCount: workstationProfile?.cpuCount ?? vm.workstationCpuCount,
+    workstationMemoryMb: workstationProfile?.memoryMb ?? vm.workstationMemoryMb,
+    workstationDiskGb: vm.workstationDiskGb,
+    workstationIsoPath: workstationProfile?.isoPath ?? vm.workstationIsoPath,
+    workstationNetworkMode: workstationProfile?.networkMode ?? vm.workstationNetworkMode,
+    workstationNetworkLabel: workstationProfile?.networkLabel ?? vm.workstationNetworkLabel,
+    workstationDisks: workstationProfile?.disks ?? [],
+    workstationNetworkInterfaces: workstationProfile?.networkInterfaces ?? [],
+    workstationProfileScannedAt,
     osFamily: vm.osFamily?.trim() ? vm.osFamily : inferredOsFamily || null,
     tags: parseTags(vm.tags),
     powerState,
@@ -620,8 +706,8 @@ router.get("/", auditMiddleware("LIST_VMS"), async (req, res) => {
 
   const runningVms: string[] = await listRunningVMs().catch(() => []);
   const syncedVms = await syncLastSeenOnline(vms as VmWithTags[], runningVms);
-  const data = syncedVms.map((vm) =>
-    serializeVm(vm, runningVms.includes(vm.vmxPath) ? "ON" : "OFF"),
+  const data = await Promise.all(
+    syncedVms.map((vm) => serializeVm(vm, runningVms.includes(vm.vmxPath) ? "ON" : "OFF")),
   );
 
   res.json(data);
@@ -643,11 +729,33 @@ router.post("/", auditMiddleware("CREATE_VM"), async (req, res) => {
     return res.status(409).json({ error: "A VM with this id already exists" });
   }
 
+  let vmxPath = payload.vmxPath?.trim() || "";
+  let vmFolderPath = payload.vmFolderPath?.trim() || null;
+
+  if ((payload.creationMode ?? "register") === "provision") {
+    const provisioned = await provisionVmFromIso({
+      name: payload.name,
+      vmFolderPath: vmFolderPath || payload.id,
+      osFamily: payload.osFamily || inferOsFamilyFromVm(payload) || null,
+      guestId: payload.workstationGuestId?.trim() || null,
+      cpuCount: payload.workstationCpuCount ?? null,
+      memoryMb: payload.workstationMemoryMb ?? null,
+      diskGb: payload.workstationDiskGb ?? null,
+      isoPath: payload.workstationIsoPath?.trim() || null,
+      networkMode: (payload.workstationNetworkMode as VmwareNetworkMode | null | undefined) ?? "nat",
+      networkLabel: payload.workstationNetworkLabel?.trim() || null,
+    });
+
+    vmxPath = provisioned.vmxPath;
+    vmFolderPath = provisioned.vmFolderPath;
+  }
+
   const createdVm = (await prisma.vM.create({
     data: {
       id: payload.id,
       name: payload.name,
-      vmxPath: payload.vmxPath,
+      vmxPath,
+      vmFolderPath,
       type: payload.type,
       tags: JSON.stringify(normalizeTags(payload.tags ?? [])),
       osFamily: payload.osFamily || inferOsFamilyFromVm(payload) || null,
@@ -657,6 +765,13 @@ router.post("/", auditMiddleware("CREATE_VM"), async (req, res) => {
       sshUser: payload.sshUser?.trim() || null,
       sshKeyPath: payload.sshKeyPath?.trim() || null,
       sshPassword: null,
+      workstationGuestId: payload.workstationGuestId?.trim() || null,
+      workstationCpuCount: payload.workstationCpuCount ?? null,
+      workstationMemoryMb: payload.workstationMemoryMb ?? null,
+      workstationDiskGb: payload.workstationDiskGb ?? null,
+      workstationIsoPath: payload.workstationIsoPath?.trim() || null,
+      workstationNetworkMode: payload.workstationNetworkMode ?? null,
+      workstationNetworkLabel: payload.workstationNetworkLabel?.trim() || null,
     },
   })) as VmWithTags;
 
@@ -664,7 +779,9 @@ router.post("/", auditMiddleware("CREATE_VM"), async (req, res) => {
     await setVmSshPassword(createdVm.id, payload.sshPassword);
   }
 
-  res.status(201).json(serializeVm(createdVm, await getVmPowerState(createdVm.vmxPath)));
+  invalidateVmwareProfileCache(createdVm.vmxPath);
+
+  res.status(201).json(await serializeVm(createdVm, await getVmPowerState(createdVm.vmxPath)));
 });
 
 router.patch("/:id/settings", auditMiddleware("UPDATE_VM_SETTINGS"), async (req, res) => {
@@ -700,6 +817,14 @@ router.patch("/:id/settings", auditMiddleware("UPDATE_VM_SETTINGS"), async (req,
     sshPort: payload.sshPort ?? null,
     sshUser: payload.sshUser?.trim() || null,
     sshKeyPath: payload.sshKeyPath?.trim() || null,
+    vmFolderPath: payload.vmFolderPath?.trim() || null,
+    workstationGuestId: payload.workstationGuestId?.trim() || null,
+    workstationCpuCount: payload.workstationCpuCount ?? null,
+    workstationMemoryMb: payload.workstationMemoryMb ?? null,
+    workstationDiskGb: payload.workstationDiskGb ?? null,
+    workstationIsoPath: payload.workstationIsoPath?.trim() || null,
+    workstationNetworkMode: payload.workstationNetworkMode ?? null,
+    workstationNetworkLabel: payload.workstationNetworkLabel?.trim() || null,
   };
 
   const updatedVm = (await prisma.vM.update({
@@ -715,7 +840,72 @@ router.patch("/:id/settings", auditMiddleware("UPDATE_VM_SETTINGS"), async (req,
     }
   }
 
-  res.json(serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
+  invalidateVmwareProfileCache(vm.vmxPath);
+  if (updatedVm.vmxPath !== vm.vmxPath) {
+    invalidateVmwareProfileCache(updatedVm.vmxPath);
+  }
+
+  res.json(await serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
+});
+
+router.patch("/:id/workstation-profile", auditMiddleware("UPDATE_VMWARE_PROFILE"), async (req, res) => {
+  const parsedId = vmIdSchema.safeParse(req.params);
+
+  if (!parsedId.success) {
+    return res.status(400).json({ error: "Invalid VM ID" });
+  }
+
+  const parsedBody = updateVmwareProfileSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: "Invalid VMware profile payload", details: parsedBody.error.flatten() });
+  }
+
+  const vm = await prisma.vM.findUnique({
+    where: { id: parsedId.data.id },
+  });
+
+  if (!vm) {
+    return res.status(404).json({ error: "VM not found" });
+  }
+
+  const powerState = await getVmPowerState(vm.vmxPath);
+  if (powerState === "ON") {
+    return res.status(409).json({ error: "Power off the VM before applying VMware hardware changes." });
+  }
+
+  const payload = parsedBody.data;
+  await applyVmwareProfile(vm.vmxPath, {
+    name: payload.name,
+    guestId: payload.workstationGuestId?.trim() || null,
+    cpuCount: payload.workstationCpuCount ?? null,
+    memoryMb: payload.workstationMemoryMb ?? null,
+    isoPath: payload.workstationIsoPath?.trim() || null,
+    networkMode: (payload.workstationNetworkMode as VmwareNetworkMode | null | undefined) ?? "nat",
+    networkLabel: payload.workstationNetworkLabel?.trim() || null,
+  });
+
+  const updatedVm = await prisma.vM.update({
+    where: { id: vm.id },
+    data: {
+      name: payload.name,
+      vmxPath: payload.vmxPath,
+      vmFolderPath: payload.vmFolderPath?.trim() || null,
+      workstationGuestId: payload.workstationGuestId?.trim() || null,
+      workstationCpuCount: payload.workstationCpuCount ?? null,
+      workstationMemoryMb: payload.workstationMemoryMb ?? null,
+      workstationDiskGb: payload.workstationDiskGb ?? null,
+      workstationIsoPath: payload.workstationIsoPath?.trim() || null,
+      workstationNetworkMode: payload.workstationNetworkMode ?? null,
+      workstationNetworkLabel: payload.workstationNetworkLabel?.trim() || null,
+    } as never,
+  }) as VmWithTags;
+
+  invalidateVmwareProfileCache(vm.vmxPath);
+  if (updatedVm.vmxPath !== vm.vmxPath) {
+    invalidateVmwareProfileCache(updatedVm.vmxPath);
+  }
+
+  res.json(await serializeVm(updatedVm, "OFF"));
 });
 
 /**
@@ -738,7 +928,7 @@ router.get("/:id", auditMiddleware("GET_VM"), async (req, res) => {
 
   const vmWithTags = vm as VmWithTags;
 
-  res.json(serializeVm(vmWithTags, await getVmPowerState(vm.vmxPath)));
+  res.json(await serializeVm(vmWithTags, await getVmPowerState(vm.vmxPath)));
 });
 
 router.get("/:id/ssh-ready", auditMiddleware("CHECK_VM_SSH_READY"), async (req, res) => {
@@ -885,7 +1075,7 @@ router.post("/:id/refresh-state", auditMiddleware("REFRESH_VM_STATE"), async (re
     })) as VmWithTags;
 
     return res.json({
-      vm: serializeVm(
+      vm: await serializeVm(
         {
           ...updatedVm,
           lastSeenOnlineAt: now,
@@ -971,7 +1161,7 @@ router.patch("/:id/connection", auditMiddleware("UPDATE_VM_CONNECTION"), async (
     },
   })) as VmWithTags;
 
-  res.json(serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
+  res.json(await serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
 });
 
 export default router;

@@ -6,12 +6,15 @@ export default function SSHTerminal({
   vmId,
   active = true,
   className = "",
+  fontSize = 13,
 }: {
   vmId: string;
   active?: boolean;
   className?: string;
+  fontSize?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
     const container = ref.current;
@@ -23,12 +26,13 @@ export default function SSHTerminal({
     const term = new Terminal({
       cursorBlink: true,
       scrollback: 1500,
-      fontSize: 14,
+      fontSize,
       theme: {
         background: "#020617",
         foreground: "#e2e8f0",
       },
     });
+    terminalRef.current = term;
     term.open(container);
     term.focus();
 
@@ -85,8 +89,23 @@ export default function SSHTerminal({
       window.removeEventListener("resize", fitTerminal);
       ws.close();
       term.dispose();
+      terminalRef.current = null;
     };
   }, [vmId]);
+
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term) {
+      return;
+    }
+
+    term.options.fontSize = fontSize;
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));
+    }, 30);
+
+    return () => window.clearTimeout(timer);
+  }, [fontSize]);
 
   useEffect(() => {
     if (!active) {

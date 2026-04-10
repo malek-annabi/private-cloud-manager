@@ -1,5 +1,5 @@
 import { prisma } from "../../core/prisma";
-import { vmStart, vmStop, vmSnapshot, vmReboot } from "../../adapters/vmware.adapter";
+import { vmStart, vmStop, vmSnapshot, vmReboot, vmDelete, getVmPowerState } from "../../adapters/vmware.adapter";
 import { logJob } from "../job.service";
 import { executeSSH } from "../../adapters/ssh.adapter";
 import { getVmSshPassword } from "../../services/vm-secret.service";
@@ -95,6 +95,10 @@ export async function handleVMJob(job: any) {
       await vmReboot(vm.vmxPath, payload.rebootMode === "hard" ? "hard" : "soft");
       break;
 
+    case "VM_DELETE":
+      await handleVmDelete(job.id, vm, payload);
+      break;
+
     case "VM_SNAPSHOT":
       if (!payload.snapshotName) {
         throw new Error("Missing snapshot name");
@@ -115,6 +119,38 @@ export async function handleVMJob(job: any) {
   action: job.type,
   status: "done"
 }));
+}
+
+async function handleVmDelete(jobId: string, vm: any, payload: any) {
+  const deleteFromDisk = Boolean(payload.deleteFromDisk);
+
+  await logJob(
+    jobId,
+    deleteFromDisk
+      ? `Deleting ${vm.name} from VMware Workstation and removing its PCM record.`
+      : `Removing ${vm.name} from the PCM database only.`,
+  );
+
+  if (deleteFromDisk) {
+    const powerState = await getVmPowerState(vm.vmxPath);
+    if (powerState === "ON") {
+      throw new Error("VM must be powered off before deleting it from disk.");
+    }
+
+    await vmDelete(vm.vmxPath);
+    await logJob(jobId, `VMware deleteVM completed for ${vm.vmxPath}`);
+  }
+
+  await prisma.vM.delete({
+    where: { id: vm.id },
+  });
+
+  await logJob(
+    jobId,
+    deleteFromDisk
+      ? `VM deleted from disk and removed from PCM: ${vm.id}`
+      : `VM removed from PCM only: ${vm.id}`,
+  );
 }
 
 async function handleVmOsUpdate(jobId: string, vm: any, payload: any) {

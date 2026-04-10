@@ -6,5 +6,6 @@ export function useVMs() {
     queryKey: ["vms"],
     queryFn: fetchVMs,
     refetchInterval: 3000,
+    staleTime: 2000,
   });
 }

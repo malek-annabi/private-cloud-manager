@@ -23,7 +23,10 @@ The frontend currently provides:
 - job volume and frontend/backend traffic charts
 - start and stop actions with state-aware buttons
 - editable SSH connection details
-- UI-based VM registration with VMX path, VM type, SSH details, tags, and generic OS family selection
+- two-plane VM modals with separate Guest management and VMware Workstation management views
+- UI-based VM registration for existing VMX paths
+- UI-based VMware Workstation provisioning from ISO with CPU, RAM, disk, and network inputs
+- delete VM flows with a checkbox to either remove the record from PCM only or fully delete a powered-off VM from disk through VMware Workstation
 - write-only SSH password fields so stored passwords are never returned to the browser
 - fixed in-view navigation with smooth jumps between dashboard sections
 - managed Linux and Windows update action with OS version and patch metadata
@@ -101,9 +104,10 @@ Typical operator flow from the UI:
 
 1. Review fleet state and per-VM activity
 2. Start or stop a VM through jobs
-3. Edit SSH target details if a guest IP changes
-4. Open one or more SSH tabs
-5. Queue a managed Linux or Windows update when needed
-6. Inspect the security change feed before sensitive Ubuntu, Debian, Kali, or Windows patching
-7. Check Jobs and Audit for history and results
-8. Fire or stop a named lab preset, optionally including the gateway on stop
+3. Open the Guest or VMware view depending on whether you want SSH/update workflows or Workstation hardware/profile changes
+4. Edit SSH target details if a guest IP changes
+5. Open one or more SSH tabs
+6. Queue a managed Linux or Windows update when needed
+7. Inspect the security change feed before sensitive Ubuntu, Debian, Kali, or Windows patching
+8. Check Jobs and Audit for history and results
+9. Fire or stop a named lab preset, optionally including the gateway on stop

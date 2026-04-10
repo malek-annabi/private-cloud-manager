@@ -60,6 +60,7 @@ model VM {
   id          String   @id
   name        String
   vmxPath     String
+  vmFolderPath String?
   type        VMType
   tags        String   @default("[]")
   poolId      String?
@@ -76,6 +77,13 @@ model VM {
   sshKeyPath  String?
   sshPassword String?
   secret      VMSecret?
+  workstationGuestId String?
+  workstationCpuCount Int?
+  workstationMemoryMb Int?
+  workstationDiskGb   Int?
+  workstationIsoPath  String?
+  workstationNetworkMode String?
+  workstationNetworkLabel String?
 
   createdAt   DateTime @default(now())
 }

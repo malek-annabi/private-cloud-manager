@@ -14,15 +14,46 @@ export type VmRecord = {
   rebootRequired?: boolean;
   isCriticalInfrastructure?: boolean;
   vmxPath: string;
+  vmFolderPath?: string | null;
   sshHost?: string | null;
   sshPort?: number | null;
   sshUser?: string | null;
+  workstationGuestId?: string | null;
+  workstationCpuCount?: number | null;
+  workstationMemoryMb?: number | null;
+  workstationDiskGb?: number | null;
+  workstationIsoPath?: string | null;
+  workstationNetworkMode?: "nat" | "bridged" | "hostonly" | "custom" | null;
+  workstationNetworkLabel?: string | null;
+  workstationDisks?: Array<{
+    key: string;
+    controller: string;
+    unit: string;
+    fileName?: string | null;
+    deviceType?: string | null;
+    mode?: string | null;
+    sizeGb?: number | null;
+  }>;
+  workstationNetworkInterfaces?: Array<{
+    key: string;
+    index: number;
+    mode?: "nat" | "bridged" | "hostonly" | "custom" | null;
+    connectionType?: string | null;
+    label?: string | null;
+    virtualDev?: string | null;
+    macAddress?: string | null;
+    present: boolean;
+    startConnected?: boolean | null;
+  }>;
+  workstationProfileScannedAt?: string | null;
 };
 
 export type CreateVmPayload = {
+  creationMode?: "register" | "provision";
   id: string;
   name: string;
-  vmxPath: string;
+  vmxPath?: string;
+  vmFolderPath?: string;
   type: "PERSISTENT" | "TEMPLATE" | "EPHEMERAL";
   tags?: string[];
   osFamily?: "ubuntu" | "debian" | "kali" | "windows" | "fortigate" | "other" | null;
@@ -32,9 +63,29 @@ export type CreateVmPayload = {
   sshUser?: string;
   sshKeyPath?: string;
   sshPassword?: string;
+  workstationGuestId?: string;
+  workstationCpuCount?: number | null;
+  workstationMemoryMb?: number | null;
+  workstationDiskGb?: number | null;
+  workstationIsoPath?: string;
+  workstationNetworkMode?: "nat" | "bridged" | "hostonly" | "custom" | null;
+  workstationNetworkLabel?: string;
 };
 
 export type UpdateVmSettingsPayload = Omit<CreateVmPayload, "id">;
+
+export type UpdateVmwareProfilePayload = {
+  name: string;
+  vmxPath: string;
+  vmFolderPath?: string;
+  workstationGuestId?: string;
+  workstationCpuCount?: number | null;
+  workstationMemoryMb?: number | null;
+  workstationDiskGb?: number | null;
+  workstationIsoPath?: string;
+  workstationNetworkMode?: "nat" | "bridged" | "hostonly" | "custom" | null;
+  workstationNetworkLabel?: string;
+};
 
 export type VmUpdateFeedRecord = {
   vmId: string;
@@ -75,6 +126,14 @@ export const updateVmSettings = async (
   payload: UpdateVmSettingsPayload,
 ): Promise<VmRecord> => {
   const res = await api.patch(`/vms/${vmId}/settings`, payload);
+  return res.data;
+};
+
+export const updateVmwareProfile = async (
+  vmId: string,
+  payload: UpdateVmwareProfilePayload,
+): Promise<VmRecord> => {
+  const res = await api.patch(`/vms/${vmId}/workstation-profile`, payload);
   return res.data;
 };
 

@@ -173,9 +173,11 @@ async function executeCreateVm(
   const vm = await apiRequest(ctx, "/vms", {
     method: "POST",
     body: JSON.stringify({
+      creationMode: params.creationMode ?? "register",
       id: params.id,
       name: params.name,
-      vmxPath: params.vmxPath,
+      vmxPath: params.vmxPath ?? "",
+      vmFolderPath: params.vmFolderPath ?? "",
       type: params.type ?? "PERSISTENT",
       tags: Array.isArray(params.tags) ? params.tags : [],
       osFamily: params.osFamily ?? null,
@@ -185,6 +187,13 @@ async function executeCreateVm(
       sshUser: params.sshUser ?? "",
       sshKeyPath: params.sshKeyPath ?? "",
       sshPassword: params.sshPassword ?? "",
+      workstationGuestId: params.workstationGuestId ?? "",
+      workstationCpuCount: params.workstationCpuCount ?? null,
+      workstationMemoryMb: params.workstationMemoryMb ?? null,
+      workstationDiskGb: params.workstationDiskGb ?? null,
+      workstationIsoPath: params.workstationIsoPath ?? "",
+      workstationNetworkMode: params.workstationNetworkMode ?? null,
+      workstationNetworkLabel: params.workstationNetworkLabel ?? "",
     }),
   });
 
@@ -229,10 +238,10 @@ async function executeUpdateVmSettings(
     body: JSON.stringify(body),
   });
 
-      return textResult(
-        [
-          `VM settings updated in Private Cloud Manager.`,
-          `This call updated the PCM database record, which is the source of truth for VM inventory.`,
+  return textResult(
+    [
+      `VM settings updated in Private Cloud Manager.`,
+      `This call updated the PCM database record, which is the source of truth for VM inventory.`,
           `id=${vm.id}`,
       `name=${vm.name}`,
       vm.osFamily ? `osFamily=${vm.osFamily}` : null,
@@ -240,6 +249,67 @@ async function executeUpdateVmSettings(
     ]
       .filter(Boolean)
       .join("\n")
+  );
+}
+
+async function executeUpdateVmWorkstation(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const vm = await apiRequest(ctx, `/vms/${encodeURIComponent(params.vmId)}/workstation-profile`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: params.name,
+      vmxPath: params.vmxPath,
+      vmFolderPath: params.vmFolderPath ?? "",
+      workstationGuestId: params.workstationGuestId ?? "",
+      workstationCpuCount: params.workstationCpuCount ?? null,
+      workstationMemoryMb: params.workstationMemoryMb ?? null,
+      workstationDiskGb: params.workstationDiskGb ?? null,
+      workstationIsoPath: params.workstationIsoPath ?? "",
+      workstationNetworkMode: params.workstationNetworkMode ?? "nat",
+      workstationNetworkLabel: params.workstationNetworkLabel ?? "",
+    }),
+  });
+
+  return textResult(
+    [
+      `VMware Workstation profile updated in Private Cloud Manager.`,
+      `This call applied CPU, memory, ISO, and network profile changes through the VMware management plane and updated the PCM database.`,
+      `id=${vm.id}`,
+      `name=${vm.name}`,
+      vm.workstationCpuCount ? `vcpus=${vm.workstationCpuCount}` : null,
+      vm.workstationMemoryMb ? `memoryMb=${vm.workstationMemoryMb}` : null,
+      vm.workstationNetworkMode ? `network=${vm.workstationNetworkMode}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+async function executeDeleteVm(
+  _toolCallId: string,
+  params: any,
+  ctx: any
+) {
+  const deleteFromDisk = Boolean(params.deleteFromDisk);
+  const job = await apiRequest(ctx, "/jobs/delete-vm", {
+    method: "POST",
+    body: JSON.stringify({
+      vmId: params.vmId,
+      deleteFromDisk,
+    }),
+  });
+
+  return textResult(
+    [
+      deleteFromDisk ? "Delete VM job queued." : "Remove VM from PCM job queued.",
+      deleteFromDisk
+        ? "This call queued a destructive VMware Workstation delete-from-disk action."
+        : "This call queued removal of the VM record from the PCM database only.",
+      formatJobSummary(job),
+    ].join("\n")
   );
 }
 
@@ -698,7 +768,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_create_vm",
         label: "PCM Create VM",
         description:
-          "Use this when the user wants to add, register, or onboard a VM into PCM. Stores the VM record, VMX path, OS family, and SSH fields in the PCM database so later workflows such as update feeds, reboot, refresh state, and SSH jobs know how to handle it.",
+          "Use this when the user wants to add, register, or onboard a VM into PCM, or provision a new VMware Workstation VM from ISO. Stores the VM record in the PCM database and can carry both guest-management settings and VMware Workstation profile settings such as CPU, memory, disk size, ISO path, and network mode.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -707,13 +777,22 @@ const privateCloudManagerPlugin = {
               type: "string",
               description: "Stable VM id, for example win-srv-2025.",
             },
+            creationMode: {
+              type: "string",
+              enum: ["register", "provision"],
+              description: "register for an existing VMX, or provision to create a new VMware Workstation VM from ISO/disk settings.",
+            },
             name: {
               type: "string",
               description: "Display name, for example Windows Server 2025.",
             },
             vmxPath: {
               type: "string",
-              description: "Absolute path to the VMware .vmx file.",
+              description: "Absolute path to the VMware .vmx file when registering an existing VM.",
+            },
+            vmFolderPath: {
+              type: "string",
+              description: "Folder path to create the VM in when provisioning from ISO.",
             },
             type: {
               type: "string",
@@ -754,8 +833,37 @@ const privateCloudManagerPlugin = {
               type: "string",
               description: "Optional SSH password.",
             },
+            workstationGuestId: {
+              type: "string",
+              description: "Optional VMware guest id such as windows2022srv-64 or ubuntu-64.",
+            },
+            workstationCpuCount: {
+              type: "number",
+              description: "Optional vCPU count.",
+            },
+            workstationMemoryMb: {
+              type: "number",
+              description: "Optional memory size in MB.",
+            },
+            workstationDiskGb: {
+              type: "number",
+              description: "Primary virtual disk size in GB, especially when provisioning from ISO.",
+            },
+            workstationIsoPath: {
+              type: "string",
+              description: "Optional local ISO path for VMware Workstation provisioning or mounting.",
+            },
+            workstationNetworkMode: {
+              type: "string",
+              enum: ["nat", "bridged", "hostonly", "custom"],
+              description: "VMware network mode.",
+            },
+            workstationNetworkLabel: {
+              type: "string",
+              description: "Optional custom vmnet label such as vmnet2.",
+            },
           },
-          required: ["id", "name", "vmxPath"],
+          required: ["id", "name"],
         },
         execute(toolCallId: string, params: any) {
           return executeCreateVm(toolCallId, params, ctx);
@@ -769,7 +877,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm_settings",
         label: "PCM Update VM Settings",
         description:
-          "Use this when the user wants to edit or correct a VM record in PCM, including name, VMX path, lifecycle type, tags, OS family, OS version, and SSH workflow settings. This updates the database-backed source of truth for that VM.",
+          "Use this when the user wants to edit the guest-management side of a VM record in PCM: name, lifecycle type, tags, OS family, OS version, and SSH workflow settings. This updates the database-backed source of truth for that VM.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -831,6 +939,100 @@ const privateCloudManagerPlugin = {
         },
         execute(toolCallId: string, params: any) {
           return executeUpdateVmSettings(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_update_vm_workstation",
+        label: "PCM Update VM Workstation",
+        description:
+          "Use this when the user wants to edit the VMware Workstation management plane for a VM: VMX path, folder path, VMware guest id, CPU count, memory size, ISO path, or network mode. This is for virtual hardware and Workstation profile changes, not guest SSH/update settings.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "Existing VM id to update.",
+            },
+            name: {
+              type: "string",
+              description: "Display name / VMware display name.",
+            },
+            vmxPath: {
+              type: "string",
+              description: "Absolute VMX path.",
+            },
+            vmFolderPath: {
+              type: "string",
+              description: "Optional VM folder path.",
+            },
+            workstationGuestId: {
+              type: "string",
+              description: "VMware guest id such as windows2022srv-64 or ubuntu-64.",
+            },
+            workstationCpuCount: {
+              type: "number",
+              description: "vCPU count.",
+            },
+            workstationMemoryMb: {
+              type: "number",
+              description: "Memory size in MB.",
+            },
+            workstationDiskGb: {
+              type: "number",
+              description: "Recorded primary disk size in GB.",
+            },
+            workstationIsoPath: {
+              type: "string",
+              description: "ISO path to mount, or empty string to eject.",
+            },
+            workstationNetworkMode: {
+              type: "string",
+              enum: ["nat", "bridged", "hostonly", "custom"],
+              description: "VMware network mode.",
+            },
+            workstationNetworkLabel: {
+              type: "string",
+              description: "Optional custom vmnet label such as vmnet2.",
+            },
+          },
+          required: ["vmId", "name", "vmxPath"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeUpdateVmWorkstation(toolCallId, params, ctx);
+        },
+      }),
+      { optional: true }
+    );
+
+    api.registerTool(
+      (ctx: any) => ({
+        name: "pcm_delete_vm",
+        label: "PCM Delete VM",
+        description:
+          "Use this when the user wants to remove a VM from PCM inventory or explicitly delete a powered-off VM from disk through VMware Workstation. Leave deleteFromDisk false to remove only the PCM record. Set deleteFromDisk true only for a destructive full delete equivalent to deleting the VM through VMware Workstation.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            vmId: {
+              type: "string",
+              description: "Existing VM id to delete.",
+            },
+            deleteFromDisk: {
+              type: "boolean",
+              description:
+                "When true, queue a full VMware delete-from-disk action. When false or omitted, remove only the PCM database record.",
+            },
+          },
+          required: ["vmId"],
+        },
+        execute(toolCallId: string, params: any) {
+          return executeDeleteVm(toolCallId, params, ctx);
         },
       }),
       { optional: true }

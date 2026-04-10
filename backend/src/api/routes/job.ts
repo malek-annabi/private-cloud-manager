@@ -39,6 +39,11 @@ const updateVmSchema = z.object({
   autoremove: z.boolean().optional(),
 });
 
+const deleteVmSchema = z.object({
+  vmId: z.string().min(1),
+  deleteFromDisk: z.boolean().optional(),
+});
+
 
 /**
  * GET /api/jobs
@@ -200,6 +205,41 @@ router.post(
       }
 
       const job = await createJob("VM_OS_UPDATE", parsed.data);
+      res.json(job);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.post(
+  "/delete-vm",
+  auditMiddleware("DELETE_VM"),
+  async (req, res) => {
+    try {
+      const parsed = deleteVmSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid payload" });
+      }
+
+      const vm = await prisma.vM.findUnique({
+        where: { id: parsed.data.vmId },
+      });
+
+      if (!vm) {
+        return res.status(404).json({ error: "VM not found" });
+      }
+
+      if (!canDeleteVM(vm)) {
+        return res.status(403).json({ error: "Policy denied" });
+      }
+
+      const job = await createJob("VM_DELETE", {
+        vmId: parsed.data.vmId,
+        deleteFromDisk: parsed.data.deleteFromDisk ?? false,
+      });
+
       res.json(job);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
