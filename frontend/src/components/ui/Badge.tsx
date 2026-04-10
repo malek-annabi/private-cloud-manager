@@ -2,10 +2,12 @@ export function Badge({
   label,
   tone = "neutral",
   onClick,
+  disabled = false,
 }: {
   label: string;
   tone?: "neutral" | "success" | "danger" | "warning" | "info";
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   const tones = {
     neutral: "bg-slate-800 text-slate-200 ring-1 ring-white/10 hover:ring-white/20 hover:bg-slate-700",
@@ -16,12 +18,17 @@ export function Badge({
   };
 
   const className = `inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all duration-300 ease-smooth ${tones[tone]} ${
-    onClick ? "cursor-pointer hover:scale-105 active:scale-95" : ""
-  }`;
+    onClick && !disabled ? "cursor-pointer hover:scale-105 active:scale-95" : ""
+  } ${disabled ? "cursor-not-allowed opacity-50" : ""}`;
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={className}>
+      <button 
+        type="button" 
+        onClick={onClick} 
+        className={className}
+        disabled={disabled}
+      >
         {label}
       </button>
     );

@@ -171,6 +171,95 @@ body {
   @apply transition-all duration-300 ease-smooth;
 }
 
+/* Cursor and clickability feedback */
+button:not(:disabled), 
+[role="button"]:not([aria-disabled="true"]), 
+a, 
+[onclick] {
+  @apply cursor-pointer;
+}
+
+/* Disabled state clarity */
+button:disabled, 
+[aria-disabled="true"], 
+.disabled {
+  @apply cursor-not-allowed opacity-60;
+}
+
+button:disabled:hover {
+  @apply shadow-none transform-none;
+}
+
+/* Link underline animation on hover */
+a {
+  @apply relative transition-all duration-300 ease-smooth;
+}
+
+a::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background-color: currentColor;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+a:hover::after {
+  width: 100%;
+}
+
+/* Text link styling for clarity */
+.text-link {
+  @apply text-teal-300 hover:text-teal-200 underline-center transition-colors duration-300 ease-smooth cursor-pointer;
+}
+
+/* Card/section clickability hint */
+.clickable-card {
+  @apply cursor-pointer transition-all duration-300 ease-smooth hover:shadow-lg hover:shadow-teal-400/20 hover:-translate-y-1;
+}
+
+.clickable-card:active {
+  @apply scale-[0.98];
+}
+
+/* Clickable badges and chips */
+.clickable-badge {
+  @apply cursor-pointer transition-all duration-300 ease-smooth hover:scale-105 active:scale-95;
+}
+
+.clickable-badge:disabled {
+  @apply cursor-not-allowed opacity-60;
+}
+
+/* Form elements interactive state */
+input:not(:disabled),
+textarea:not(:disabled),
+select:not(:disabled) {
+  @apply cursor-text;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  @apply cursor-not-allowed opacity-60;
+}
+
+/* Tab clickability */
+[role="tab"] {
+  @apply cursor-pointer transition-all duration-300 ease-smooth;
+}
+
+[role="tab"]:hover:not([aria-selected="true"]) {
+  @apply opacity-80;
+}
+
+/* Modal/Overlay background should not be clickable */
+.modal-backdrop {
+  @apply cursor-default;
+}
+
 /* Input error state animation */
 .input-error {
   @apply border-rose-400/50 ring-rose-400/30 animate-pulse-subtle;
