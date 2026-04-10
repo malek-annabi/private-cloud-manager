@@ -2186,7 +2186,7 @@ export default function VMs() {
 
         {activeSessionVm && (
         <div
-          className={`fixed z-40 ${isSshWindowMinimized ? "pointer-events-none opacity-0" : "opacity-100"} ${
+          className={`fixed z-40 transition-all duration-400 ease-smooth ${isSshWindowMinimized ? "pointer-events-none opacity-0" : "opacity-100"} ${
             sshWindowMode === "expanded"
               ? "inset-4"
               : sshWindowMode === "compact"
@@ -2195,7 +2195,7 @@ export default function VMs() {
           }`}
         >
           <div
-            className={`${
+            className={`transition-all duration-400 ease-smooth ${
               sshWindowMode === "expanded"
                 ? "h-full w-full"
                 : sshWindowMode === "compact"
@@ -2204,7 +2204,7 @@ export default function VMs() {
             } resize overflow-auto rounded-[1.75rem]`}
           >
           <Card className="h-full w-full border-white/10 bg-slate-950/95">
-            <div className="mb-4 flex items-center justify-between gap-4">
+            <div className="mb-4 flex items-center justify-between gap-4 animate-slide-up">
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
                   Live shell
@@ -2233,7 +2233,7 @@ export default function VMs() {
                 >
                   <ZoomInIcon className="h-4 w-4" />
                 </Button>
-                <div className="flex items-center rounded-2xl border border-white/10 bg-slate-900/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+                <div className="flex items-center rounded-2xl border border-white/10 bg-slate-900/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400 transition-all duration-300 ease-smooth">
                   {sshFontSize}px
                 </div>
                 <Button
@@ -2279,11 +2279,11 @@ export default function VMs() {
               <button
                 type="button"
                 onClick={() => setIsAddSessionOpen(true)}
-                className="inline-flex items-center justify-center rounded-t-2xl border border-dashed border-white/20 px-4 py-2 text-lg text-slate-300 transition hover:border-teal-400/40 hover:text-white"
+                className="inline-flex items-center justify-center rounded-t-2xl border border-dashed border-white/20 px-4 py-2 text-lg text-slate-300 transition-all duration-300 ease-smooth hover:border-teal-400/40 hover:text-white hover:shadow-md hover:shadow-teal-400/20 active:scale-95"
               >
                 +
               </button>
-              {sshSessions.map((session) => {
+              {sshSessions.map((session, index) => {
                 const vm = data.find((candidate) => candidate.id === session.vmId);
 
                 if (!vm) {
@@ -2295,23 +2295,27 @@ export default function VMs() {
                 return (
                   <div
                     key={session.id}
-                    className={`inline-flex items-center gap-2 rounded-t-2xl border px-4 py-2 ${
+                    className={`inline-flex items-center gap-2 rounded-t-2xl border px-4 py-2 transition-all duration-300 ease-smooth ${
                       isActive
-                        ? "border-teal-400/40 bg-teal-400/12 text-white"
-                        : "border-white/10 bg-slate-900/70 text-slate-300"
+                        ? "border-teal-400/40 bg-teal-400/12 text-white shadow-md shadow-teal-400/20"
+                        : "border-white/10 bg-slate-900/70 text-slate-300 hover:border-white/20 hover:bg-slate-900/90"
                     }`}
+                    style={{
+                      animation: `slideUp 0.3s ease-smooth backwards`,
+                      animationDelay: `${index * 0.05}s`,
+                    }}
                   >
                     <button
                       type="button"
                       onClick={() => setActiveSessionId(session.id)}
-                      className="text-sm"
+                      className="text-sm transition-colors duration-300 ease-smooth"
                     >
                       {vm.name}
                     </button>
                     <button
                       type="button"
                       onClick={() => closeSshSession(session.id)}
-                      className="text-xs text-slate-400 transition hover:text-white"
+                      className="text-xs text-slate-400 transition-all duration-300 ease-smooth hover:text-white hover:scale-110 active:scale-95"
                     >
                       x
                     </button>
@@ -2321,7 +2325,7 @@ export default function VMs() {
             </div>
 
             {isAddSessionOpen ? (
-              <div className="mb-4 rounded-2xl border border-white/10 bg-slate-900/90 p-4">
+              <div className="mb-4 rounded-2xl border border-white/10 bg-slate-900/90 p-4 animate-slide-down transition-all duration-300 ease-smooth">
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div>
                     <div className="text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -2340,13 +2344,17 @@ export default function VMs() {
                 </div>
 
                 <div className="grid max-h-72 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
-                  {sessionCandidateVms.map((vm) => (
+                  {sessionCandidateVms.map((vm, index) => (
                     <button
                       key={vm.id}
                       type="button"
                       onClick={() => void handleSshClick(vm)}
                       disabled={isOpeningSessionFor === vm.id}
-                      className="rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-left transition hover:border-teal-400/40 hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-left transition-all duration-300 ease-smooth hover:border-teal-400/40 hover:bg-slate-950 hover:shadow-md hover:shadow-teal-400/20 hover:-translate-y-1 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none"
+                      style={{
+                        animation: `slideUp 0.3s ease-smooth backwards`,
+                        animationDelay: `${index * 0.05}s`,
+                      }}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -2386,7 +2394,7 @@ export default function VMs() {
                 return (
                   <div
                     key={session.id}
-                    className={`absolute inset-3 ${
+                    className={`absolute inset-3 transition-all duration-300 ease-smooth ${
                       isActive
                         ? "z-10 opacity-100"
                         : "pointer-events-none z-0 opacity-0"

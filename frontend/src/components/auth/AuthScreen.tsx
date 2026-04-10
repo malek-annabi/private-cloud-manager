@@ -37,8 +37,8 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
       <div className="relative mx-auto flex min-h-screen max-w-6xl items-center px-6 py-16">
         <div className="grid w-full gap-10 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-8">
-            <div className="inline-flex items-center rounded-full border border-teal-400/30 bg-teal-400/10 px-4 py-1 text-xs uppercase tracking-[0.3em] text-teal-200">
+          <div className="space-y-8 animate-slide-left">
+            <div className="inline-flex items-center rounded-full border border-teal-400/30 bg-teal-400/10 px-4 py-1 text-xs uppercase tracking-[0.3em] text-teal-200 transition-all duration-300 ease-smooth hover:border-teal-400/50 hover:bg-teal-400/20">
               Private Cloud Manager
             </div>
 
@@ -58,10 +58,14 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 { label: "Realtime polling", value: "VM + job refresh" },
                 { label: "Secure entry", value: "Token-gated API access" },
                 { label: "AI-ready", value: "OpenClaw tool layer" },
-              ].map((item) => (
+              ].map((item, index) => (
                 <div
                   key={item.label}
-                  className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_20px_50px_rgba(8,15,23,0.25)] backdrop-blur"
+                  className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_20px_50px_rgba(8,15,23,0.25)] backdrop-blur transition-all duration-300 ease-smooth hover:border-white/20 hover:bg-white/10 hover:shadow-lg hover:shadow-teal-400/10 hover:-translate-y-1"
+                  style={{
+                    animation: `slideUp 0.5s ease-smooth backwards`,
+                    animationDelay: `${index * 0.1}s`,
+                  }}
                 >
                   <div className="text-xs uppercase tracking-[0.25em] text-slate-400">
                     {item.label}
@@ -76,7 +80,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
           <form
             onSubmit={handleSubmit}
-            className="rounded-[2rem] border border-white/10 bg-slate-950/80 p-8 shadow-[0_35px_90px_rgba(2,8,23,0.5)] backdrop-blur-xl"
+            className="rounded-[2rem] border border-white/10 bg-slate-950/80 p-8 shadow-[0_35px_90px_rgba(2,8,23,0.5)] backdrop-blur-xl transition-all duration-300 ease-smooth hover:border-white/20 hover:shadow-[0_35px_100px_rgba(20,184,166,0.2)] animate-slide-right"
           >
             <div className="space-y-3">
               <div className="text-xs uppercase tracking-[0.25em] text-teal-200">
@@ -92,7 +96,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             </div>
 
             <div className="mt-8 space-y-3">
-              <label className="text-sm text-slate-300" htmlFor="token">
+              <label className="text-sm text-slate-300 transition-colors duration-300 ease-smooth" htmlFor="token">
                 API token
               </label>
               <input
@@ -101,15 +105,19 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="Enter bearer token"
-                className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-slate-100 outline-none transition focus:border-teal-400/50 focus:ring-2 focus:ring-teal-400/20"
+                className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-slate-100 outline-none transition-all duration-300 ease-smooth focus:border-teal-400/50 focus:ring-2 focus:ring-teal-400/30 focus:shadow-lg focus:shadow-teal-400/20 focus:-translate-y-0.5"
               />
-              {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+              {error ? (
+                <p className="text-sm text-rose-300 animate-slide-down">
+                  {error}
+                </p>
+              ) : null}
             </div>
 
             <button
               type="submit"
               disabled={isSubmitting}
-              className="mt-8 inline-flex w-full items-center justify-center rounded-2xl bg-teal-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-teal-300 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-8 inline-flex w-full items-center justify-center rounded-2xl bg-teal-400 px-4 py-3 text-sm font-semibold text-slate-950 transition-all duration-300 ease-smooth hover:bg-teal-300 hover:shadow-lg hover:shadow-teal-400/30 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-none"
             >
               {isSubmitting ? "Validating..." : "Unlock dashboard"}
             </button>

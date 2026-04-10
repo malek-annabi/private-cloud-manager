@@ -16,3 +16,207 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* Smooth transitions for all interactive elements */
+@layer components {
+  /* Button base animations */
+  .btn-base {
+    @apply transition-all duration-300 ease-smooth;
+  }
+
+  /* Card animations */
+  .card-base {
+    @apply transition-all duration-300 ease-smooth;
+  }
+
+  /* Link animations */
+  .link-smooth {
+    @apply transition-colors duration-300 ease-smooth;
+  }
+
+  /* Hover lift effect for cards */
+  .hover-lift {
+    @apply hover:shadow-lg hover:shadow-teal-500/20 hover:-translate-y-1 transition-all duration-300 ease-smooth;
+  }
+
+  /* Focus glow for inputs */
+  .focus-glow {
+    @apply focus:outline-none focus:ring-2 focus:ring-teal-500/50 focus:shadow-lg focus:shadow-teal-500/30 transition-all duration-300 ease-smooth;
+  }
+
+  /* Smooth opacity changes */
+  .fade-transition {
+    @apply transition-opacity duration-300 ease-smooth;
+  }
+
+  /* Smooth transform changes */
+  .transform-smooth {
+    @apply transition-transform duration-300 ease-smooth;
+  }
+
+  /* Combined smooth transition */
+  .smooth-all {
+    @apply transition-all duration-300 ease-smooth;
+  }
+
+  /* Input and form field base */
+  input, textarea, select {
+    @apply transition-all duration-300 ease-smooth;
+  }
+
+  /* Input focus state with enhanced glow */
+  input:focus, textarea:focus, select:focus {
+    @apply outline-none ring-2 ring-teal-400/30 shadow-lg shadow-teal-400/20;
+  }
+
+  /* Checkbox and radio smooth transitions */
+  input[type="checkbox"]:focus, 
+  input[type="radio"]:focus {
+    @apply ring-2 ring-teal-400/40;
+  }
+
+  /* Link hover underline */
+  a {
+    @apply relative transition-colors duration-300 ease-smooth;
+  }
+
+  /* Enhanced interactive elements */
+  button, [role="button"] {
+    @apply transition-all duration-300 ease-smooth;
+  }
+}
+
+/* Custom animation for rotating icons */
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-rotate-smooth {
+  animation: rotate 20s linear infinite;
+}
+
+/* Smooth width transition for sidebar */
+@keyframes sidebarWidth {
+  0% {
+    width: var(--from-width);
+  }
+  100% {
+    width: var(--to-width);
+  }
+}
+
+/* Stagger animations for lists */
+.stagger-fade-in {
+  animation: fadeIn 0.4s ease-in-out backwards;
+}
+
+.stagger-fade-in:nth-child(1) { animation-delay: 0.05s; }
+.stagger-fade-in:nth-child(2) { animation-delay: 0.1s; }
+.stagger-fade-in:nth-child(3) { animation-delay: 0.15s; }
+.stagger-fade-in:nth-child(4) { animation-delay: 0.2s; }
+.stagger-fade-in:nth-child(5) { animation-delay: 0.25s; }
+.stagger-fade-in:nth-child(n+6) { animation-delay: 0.3s; }
+
+/* Smooth color transitions */
+.color-transition {
+  @apply transition-colors duration-300 ease-smooth;
+}
+
+/* Button press feedback */
+.btn-press {
+  @apply active:scale-95 transition-transform duration-150 ease-smooth;
+}
+
+/* Underline animation that expands from center */
+.underline-center {
+  position: relative;
+}
+
+.underline-center::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background-color: currentColor;
+  transform: translateX(-50%);
+  transition: width 0.3s ease-smooth;
+}
+
+.underline-center:hover::after {
+  width: 100%;
+}
+
+/* Enhanced hover states for interactive elements */
+.interactive-element {
+  @apply transition-all duration-300 ease-smooth cursor-pointer;
+}
+
+.interactive-element:hover {
+  @apply shadow-md shadow-teal-400/10;
+}
+
+.interactive-element:active {
+  @apply scale-95;
+}
+
+/* Smooth transitions for modal/dialog elements */
+[role="dialog"], .modal, .dialog {
+  @apply transition-all duration-300 ease-smooth;
+}
+
+/* Input error state animation */
+.input-error {
+  @apply border-rose-400/50 ring-rose-400/30 animate-pulse-subtle;
+}
+
+/* Input success state animation */
+.input-success {
+  @apply border-emerald-400/50 ring-emerald-400/30;
+}
+
+/* Loading state animations */
+.animate-loading {
+  @apply animate-pulse-subtle;
+}
+
+/* Icon rotation smooth */
+.icon-rotate {
+  @apply transition-transform duration-400 ease-smooth;
+}
+
+/* Tab animation */
+.tab-item {
+  @apply transition-all duration-300 ease-smooth;
+}
+
+.tab-item.active {
+  @apply shadow-md;
+}
+
+/* Gradient animation background */
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradientShift 3s ease infinite;
+}
+
+/* Smooth scroll behavior for smooth scroll to elements */
+html.smooth-scroll {
+  scroll-behavior: smooth;
+}
+
+/* Transition wrapper for state changes */
+.transition-wrapper {
+  @apply transition-all duration-300 ease-smooth;
+}

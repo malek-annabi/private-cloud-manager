@@ -10,5 +10,11 @@ export function JobStatusBadge({ status }: { status: string }) {
     CANCELLED: "neutral",
   };
 
-  return <Badge label={status} tone={tones[status] ?? "neutral"} />;
+  const animationClass = status === "RUNNING" ? "animate-pulse-subtle" : "";
+
+  return (
+    <div className={animationClass}>
+      <Badge label={status} tone={tones[status] ?? "neutral"} />
+    </div>
+  );
 }
