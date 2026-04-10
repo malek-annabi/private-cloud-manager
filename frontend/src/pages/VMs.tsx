@@ -2031,7 +2031,7 @@ export default function VMs() {
                     Register a VM in the control plane
                   </h2>
                   <p className="max-w-2xl text-sm leading-6 text-slate-400">
-                    This adds the VM to the database, not the private inventory bootstrap file.
+                    This adds the VM directly to the PCM database, which is now the single source of truth for VM records.
                     Pick the OS family so update/feed workflows can choose the right command path.
                   </p>
                 </div>
@@ -2481,7 +2481,7 @@ export default function VMs() {
                 </h2>
                 <p className="text-sm leading-6 text-slate-400">
                   Keep the live SSH target here so the dashboard follows IP changes
-                  without needing to edit the inventory bootstrap file.
+                  directly in the database-backed VM record.
                 </p>
               </div>
 

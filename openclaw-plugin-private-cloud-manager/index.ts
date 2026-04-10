@@ -188,11 +188,11 @@ async function executeCreateVm(
     }),
   });
 
-  return textResult(
-    [
-      `VM registered in Private Cloud Manager.`,
-      `This call only added a VM record to the PCM database; it did not edit inventory.json.`,
-      `id=${vm.id}`,
+      return textResult(
+        [
+          `VM registered in Private Cloud Manager.`,
+          `This call added a VM record to the PCM database, which is the source of truth for VM inventory.`,
+          `id=${vm.id}`,
       `name=${vm.name}`,
       vm.osFamily ? `osFamily=${vm.osFamily}` : null,
       vm.powerState ? `powerState=${vm.powerState}` : null,
@@ -229,11 +229,11 @@ async function executeUpdateVmSettings(
     body: JSON.stringify(body),
   });
 
-  return textResult(
-    [
-      `VM settings updated in Private Cloud Manager.`,
-      `This call only updated the PCM database record; it did not edit inventory.json.`,
-      `id=${vm.id}`,
+      return textResult(
+        [
+          `VM settings updated in Private Cloud Manager.`,
+          `This call updated the PCM database record, which is the source of truth for VM inventory.`,
+          `id=${vm.id}`,
       `name=${vm.name}`,
       vm.osFamily ? `osFamily=${vm.osFamily}` : null,
       vm.powerState ? `powerState=${vm.powerState}` : null,
@@ -698,7 +698,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_create_vm",
         label: "PCM Create VM",
         description:
-          "Use this when the user wants to add, register, or onboard a VM into PCM. Stores the VM record, VMX path, OS family, and SSH fields in the PCM database so later workflows such as update feeds, reboot, refresh state, and SSH jobs know how to handle it. This does not edit inventory.json.",
+          "Use this when the user wants to add, register, or onboard a VM into PCM. Stores the VM record, VMX path, OS family, and SSH fields in the PCM database so later workflows such as update feeds, reboot, refresh state, and SSH jobs know how to handle it.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -769,7 +769,7 @@ const privateCloudManagerPlugin = {
         name: "pcm_update_vm_settings",
         label: "PCM Update VM Settings",
         description:
-          "Use this when the user wants to edit or correct a VM record in PCM, including name, VMX path, lifecycle type, tags, OS family, OS version, and SSH workflow settings. This updates the PCM database only; it does not edit inventory.json.",
+          "Use this when the user wants to edit or correct a VM record in PCM, including name, VMX path, lifecycle type, tags, OS family, OS version, and SSH workflow settings. This updates the database-backed source of truth for that VM.",
         parameters: {
           type: "object",
           additionalProperties: false,

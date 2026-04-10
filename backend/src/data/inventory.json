@@ -1,0 +1,232 @@
+{
+  "vms": [
+    {
+      "id": "kali-01",
+      "name": "Kali Linux",
+      "vmxPath": "D:\\Vms\\Kali\\Kali.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.14",
+        "port": 22,
+        "user": "kali",
+        "password": "kali"
+      }
+    },
+    {
+      "id": "FG-VM",
+      "name": "FG-VM",
+      "vmxPath": "E:\\Vms\\7.0.15\\7.0.15.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "192.168.18.250",
+        "port": 64022,
+        "user": "admin",
+        "password": "GNKXiE6yFHJustdJrQLLEJebs0xwRjxQ"
+      }
+    },
+    {
+      "id": "win-srv-2025",
+      "name": "Windows Server 2025",
+      "vmxPath": "D:\\Vms\\WIN-SRV-2025\\Windows Server 2025.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.5",
+        "port": 22,
+        "user": "Administrator",
+        "password": "Nightroo*1998"
+      }
+    },
+    {
+      "id": "ubuntu-server-victim",
+      "name": "Ubuntu Server Victim",
+      "vmxPath": "D:\\Vms\\Ubuntu-server-victim\\Ubuntu-server-victim.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.6",
+        "port": 22,
+        "user": "victim",
+        "password": "victim"
+      }
+    },
+    {
+      "id": "misp",
+      "name": "MISP",
+      "vmxPath": "E:\\Vms\\MISP\\MISP.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.7",
+        "port": 22,
+        "user": "misp",
+        "password": "misp"
+      }
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "vmxPath": "E:\\Vms\\N8N\\N8N.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "n8n-2",
+      "name": "n8n (D drive)",
+      "vmxPath": "D:\\Vms\\n8n\\n8n.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "syno",
+      "name": "Synology",
+      "vmxPath": "E:\\Vms\\SYNO\\SYNO.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "admin",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "graf-prom",
+      "name": "Grafana + Prometheus",
+      "vmxPath": "E:\\Vms\\Graf-Prom\\Graf-Prom.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "next",
+      "name": "Nextcloud",
+      "vmxPath": "E:\\Vms\\NEXT\\NEXT.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "wazuh",
+      "name": "Wazuh",
+      "vmxPath": "E:\\Vms\\wazuh\\wazuh.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.200",
+        "port": 22,
+        "user": "wazuh",
+        "password": "wazuh"
+      }
+    },
+    {
+      "id": "iris",
+      "name": "IRIS",
+      "vmxPath": "D:\\Vms\\IRIS\\IRIS.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.4",
+        "port": 22,
+        "user": "iris",
+        "password": "iris"
+      }
+    },
+    {
+      "id": "wireguard",
+      "name": "WireGuard",
+      "vmxPath": "D:\\Vms\\wireguard\\wireguard.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.10",
+        "port": 22,
+        "user": "wireguard",
+        "password": "wireguard"
+      }
+    },
+    {
+      "id": "pihole",
+      "name": "Pi-hole",
+      "vmxPath": "E:\\Vms\\Pihole\\PiHole.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.9",
+        "port": 22,
+        "user": "pihole",
+        "password": "pihole"
+      }
+    },
+    {
+      "id": "graylog",
+      "name": "Graylog",
+      "vmxPath": "E:\\Vms\\graylog\\graylog.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.12",
+        "port": 22,
+        "user": "graylog",
+        "password": "graylog"
+      }
+    },
+    {
+      "id": "ubuntu-web",
+      "name": "Ubuntu Server WEB",
+      "vmxPath": "E:\\Vms\\Ubuntu-Server-WEB\\Ubuntu-Server-WEB.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "ubuntu",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "dolibarr",
+      "name": "Dolibarr",
+      "vmxPath": "E:\\Vms\\Dolibar\\Dolibar.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "islem",
+      "name": "Islem",
+      "vmxPath": "E:\\Vms\\New folder\\Islem.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    },
+    {
+      "id": "tpot",
+      "name": "T-Pot",
+      "vmxPath": "E:\\Vms\\tpot\\tpot.vmx",
+      "type": "PERSISTENT",
+      "ssh": {
+        "host": "10.10.0.XX",
+        "port": 22,
+        "user": "root",
+        "password": "yourpassword"
+      }
+    }
+  ]
+}

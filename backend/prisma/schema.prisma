@@ -75,8 +75,18 @@ model VM {
   sshUser     String?
   sshKeyPath  String?
   sshPassword String?
+  secret      VMSecret?
 
   createdAt   DateTime @default(now())
+}
+
+model VMSecret {
+  vmId                  String   @id
+  encryptedSshPassword  String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  vm                    VM       @relation(fields: [vmId], references: [id], onDelete: Cascade)
 }
 
 model LabStack {

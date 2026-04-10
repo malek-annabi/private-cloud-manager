@@ -8,6 +8,11 @@ import { logger } from "../../core/logger";
 import net from "net";
 import { isCriticalInfrastructureVm } from "../../services/policy.service";
 import { executeSSH } from "../../adapters/ssh.adapter";
+import {
+  clearVmSshPassword,
+  getVmSshPassword,
+  setVmSshPassword,
+} from "../../services/vm-secret.service";
 
 const router = Router();
 type VmWithTags = Awaited<ReturnType<typeof prisma.vM.findMany>>[number] & {
@@ -151,7 +156,21 @@ function serializeVm(vm: VmWithTags, powerState: "ON" | "OFF" | "UNKNOWN") {
   const inferredOsFamily = inferOsFamilyFromVm(vm);
 
   return {
-    ...vm,
+    id: vm.id,
+    name: vm.name,
+    vmxPath: vm.vmxPath,
+    type: vm.type,
+    poolId: vm.poolId,
+    lastSeenOnlineAt: vm.lastSeenOnlineAt,
+    lastSshLoginAt: vm.lastSshLoginAt,
+    osVersion: vm.osVersion,
+    lastUpdatedAt: vm.lastUpdatedAt,
+    rebootRequired: vm.rebootRequired,
+    sshHost: vm.sshHost,
+    sshPort: vm.sshPort,
+    sshUser: vm.sshUser,
+    sshKeyPath: vm.sshKeyPath,
+    createdAt: vm.createdAt,
     osFamily: vm.osFamily?.trim() ? vm.osFamily : inferredOsFamily || null,
     tags: parseTags(vm.tags),
     powerState,
@@ -637,9 +656,13 @@ router.post("/", auditMiddleware("CREATE_VM"), async (req, res) => {
       sshPort: payload.sshPort ?? null,
       sshUser: payload.sshUser?.trim() || null,
       sshKeyPath: payload.sshKeyPath?.trim() || null,
-      sshPassword: payload.sshPassword || null,
+      sshPassword: null,
     },
   })) as VmWithTags;
+
+  if (typeof payload.sshPassword === "string" && payload.sshPassword.length > 0) {
+    await setVmSshPassword(createdVm.id, payload.sshPassword);
+  }
 
   res.status(201).json(serializeVm(createdVm, await getVmPowerState(createdVm.vmxPath)));
 });
@@ -679,14 +702,18 @@ router.patch("/:id/settings", auditMiddleware("UPDATE_VM_SETTINGS"), async (req,
     sshKeyPath: payload.sshKeyPath?.trim() || null,
   };
 
-  if (payload.sshPassword !== undefined) {
-    updateData.sshPassword = payload.sshPassword || null;
-  }
-
   const updatedVm = (await prisma.vM.update({
     where: { id: vm.id },
     data: updateData as never,
   })) as VmWithTags;
+
+  if (payload.sshPassword !== undefined) {
+    if (payload.sshPassword) {
+      await setVmSshPassword(vm.id, payload.sshPassword);
+    } else {
+      await clearVmSshPassword(vm.id);
+    }
+  }
 
   res.json(serializeVm(updatedVm, await getVmPowerState(updatedVm.vmxPath)));
 });
@@ -776,12 +803,14 @@ router.get("/:id/update-feed", auditMiddleware("GET_VM_UPDATE_FEED"), async (req
   const mode = parsedQuery.data.mode ?? "security";
 
   try {
+    const password = await getVmSshPassword(vm.id);
+
     const result = await executeSSH({
       host: vm.sshHost,
       port: vm.sshPort || 22,
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
-      password: vm.sshPassword ?? undefined,
+      password: password ?? undefined,
       command: isWindowsManagedOs(osFamily)
         ? buildWindowsUpdateFeedCommand()
         : buildUpdateFeedCommand(),
@@ -829,12 +858,14 @@ router.post("/:id/refresh-state", auditMiddleware("REFRESH_VM_STATE"), async (re
   }
 
   try {
+    const password = await getVmSshPassword(vm.id);
+
     const result = await executeSSH({
       host: vm.sshHost,
       port: vm.sshPort || 22,
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
-      password: vm.sshPassword ?? undefined,
+      password: password ?? undefined,
       command: isWindowsManagedOs(inferOsFamilyFromVm(vm))
         ? buildWindowsMetadataRefreshCommand()
         : buildMetadataRefreshCommand(),

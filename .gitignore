@@ -39,10 +39,8 @@ backend/node_modules/
 backend/dist/
 backend/dev.db
 backend/dev.db-journal
-backend/src/data/inventory.json
 
 # OpenClaw plugin local artifacts
 openclaw-plugin-private-cloud-manager/node_modules/
 
 # Screenshots and local docs exports
-

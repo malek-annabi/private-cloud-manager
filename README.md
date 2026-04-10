@@ -90,7 +90,7 @@ Express + TypeScript + Prisma + SQLite + `ssh2` + `ws`
 
 Responsibilities:
 
-- load and persist VM inventory
+- persist VM inventory directly in the database
 - expose VM, job, audit, and readiness APIs
 - execute VMware operations through `vmrun`
 - run managed Linux and Windows update jobs
@@ -135,45 +135,20 @@ The main records are:
 - `JobLog`: execution logs for each job
 - `AuditEvent`: traceable operator and API actions
 
-The inventory file is not the database. The flow is:
+The database is now the only source of truth for VM inventory.
 
-1. you define VMs in `backend/src/data/inventory.json`
-2. the backend reads that file on startup
-3. `inventory.service.ts` upserts those records into the `VM` table
-4. the frontend and OpenClaw plugin operate on the database-backed records
+That means:
 
-So `inventory.json` is the bootstrap source, while Prisma + SQLite represent the live operational state.
-You can also add VMs directly from the UI or `pcm_create_vm`; those records are stored in SQLite and do not rewrite the private bootstrap inventory file.
+1. VMs live in Prisma + SQLite
+2. the backend does not import a startup inventory file
+3. the frontend and OpenClaw plugin read and modify the same database-backed VM records
+4. VM edits survive backend restarts because there is no boot-time overwrite from `inventory.json`
 
-## Inventory File and Public Example
+You can add and edit VMs from:
 
-The real inventory file can contain confidential information such as:
-
-- internal IP addresses
-- VM paths
-- SSH usernames
-- SSH passwords
-- SSH private key paths
-
-Because of that, the real file stays local and out of Git:
-
-```text
-backend/src/data/inventory.json
-```
-
-The committed template for other builders is:
-
-```text
-backend/src/data/inventory.example.json
-```
-
-To create your own inventory:
-
-1. Copy `inventory.example.json` to `inventory.json`
-2. Replace the example VM ids, names, and `.vmx` paths
-3. Add either `password` or `privateKeyPath` for SSH-enabled VMs
-4. Optionally add OS hints such as Ubuntu, Debian, Kali, or Windows family/version so update actions are available immediately
-5. Keep `inventory.json` private and untracked
+- the web UI
+- the `POST /api/vms` and `PATCH /api/vms/:id/settings` APIs
+- OpenClaw tools such as `pcm_create_vm` and `pcm_update_vm_settings`
 
 ## Project Structure
 
@@ -192,7 +167,6 @@ To create your own inventory:
 - Node.js installed
 - VMware Workstation Pro installed on the host machine
 - `vmrun.exe` available at the path expected by the backend
-- one or more VMs configured in the backend inventory
 - Ollama installed locally if you want the AI integration
 - OpenClaw installed locally if you want the AI tool workflow
 - SSH enabled on guest VMs you want to access or update through the dashboard
@@ -217,6 +191,7 @@ Important backend notes:
 
 - API auth uses a bearer token
 - if `API_TOKEN` is not set, the default fallback is `dev-token`
+- set `PCM_SECRET_KEY` in real deployments so VM SSH passwords are encrypted at rest with a dedicated key instead of falling back to the API token
 - the backend tracks VM state, SSH readiness, jobs, and audit activity
 - the backend also exposes lightweight API traffic metrics for the dashboard
 - Ubuntu, Debian, Kali, and Windows VMs can be updated through a managed job instead of ad hoc SSH commands
@@ -245,6 +220,7 @@ The dashboard now also includes:
 - Chart.js-based job volume and API traffic charts
 - a cyber news feed with story modal drill-down
 - a retractable sidebar for denser operator workflows
+- write-only password fields for VM SSH credentials; stored secrets are not returned by the API
 
 ### Ollama
 
@@ -367,9 +343,9 @@ These files do not make the tools work, but they improve consistency and reduce 
 
 ## End-to-End Setup Flow
 
-1. Configure `backend/src/data/inventory.json` from `inventory.example.json`
-2. Start the backend and let Prisma create/sync the SQLite database
-3. Start the frontend and verify you can log in with the backend token
+1. Start the backend and let Prisma create/sync the SQLite database
+2. Start the frontend and verify you can log in with the backend token
+3. Add your VMware VMs through the UI or the VM API
 4. Verify VM listing, power-state refresh, and SSH access from the browser UI
 5. Start Ollama and pull a model
 6. Install and configure OpenClaw
@@ -405,7 +381,6 @@ This project is not just for my own environment. I want it to be understandable,
 That is why the public repo includes:
 
 - a real project writeup
-- a safe inventory example instead of leaking private infrastructure details
 - architecture documentation across frontend, backend, and OpenClaw integration
 - a structure that other builders can adapt to their own VMware environments
 

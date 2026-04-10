@@ -17,13 +17,14 @@ Built with:
 The frontend currently provides:
 
 - token-gated access to the web interface
-- live VM inventory with power-state visibility
+- live database-backed VM inventory with power-state visibility
 - per-VM `last online` and `last SSH login` activity indicators
 - compact fleet stats and recent SSH/update cadence widgets
 - job volume and frontend/backend traffic charts
 - start and stop actions with state-aware buttons
 - editable SSH connection details
 - UI-based VM registration with VMX path, VM type, SSH details, tags, and generic OS family selection
+- write-only SSH password fields so stored passwords are never returned to the browser
 - fixed in-view navigation with smooth jumps between dashboard sections
 - managed Linux and Windows update action with OS version and patch metadata
 - on-demand security change feed with kernel/core package highlights before patching
@@ -86,6 +87,7 @@ http://127.0.0.1:5173
 5. Log in with the backend API token
 6. Verify:
    - VM inventory loads
+   - created or edited VMs persist after backend restart
    - power-state badges update
    - jobs and audit pages respond
    - SSH opens for running VMs

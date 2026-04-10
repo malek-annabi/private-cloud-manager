@@ -16,7 +16,7 @@ Built with:
 
 The backend is responsible for:
 
-- loading inventory into the local database
+- storing and serving the database-backed VM inventory
 - exposing VM, job, audit, and readiness APIs
 - executing VMware lifecycle operations
 - running background job handlers
@@ -61,26 +61,13 @@ The main records are:
 - `JobLog`
 - `AuditEvent`
 
-The `VM` record is the live operational copy of your inventory. It stores:
+The `VM` record is the source of truth for your inventory. It stores:
 
-- static bootstrap data from `inventory.json`
+- the registered VM identity and VMware path
 - live power state derived from VMware
 - SSH connection details that can be edited from the UI
-- UI/API-created VM records that live in SQLite without modifying the private inventory bootstrap file
 - activity metadata such as `lastSeenOnlineAt` and `lastSshLoginAt`
 - OS patch metadata such as `osFamily`, `osVersion`, `lastUpdatedAt`, and `rebootRequired`
-
-The real inventory bootstrap file stays local at:
-
-```text
-backend/src/data/inventory.json
-```
-
-The public template is:
-
-```text
-backend/src/data/inventory.example.json
-```
 
 ## Run Locally
 
@@ -103,26 +90,32 @@ http://127.0.0.1:8000
 - if `API_TOKEN` is not set, the fallback token is `dev-token`
 - background jobs are processed by the worker
 - interactive SSH is handled separately through the WebSocket server
-- VMware inventory is bootstrapped from `backend/src/data/inventory.json`
-- the real inventory file should stay private and untracked
+- the SQLite database is the only source of truth for VM records
 - Linux update jobs depend on working SSH credentials and `sudo` privileges on the guest; Windows update jobs depend on Windows OpenSSH and Windows Update Agent availability
 - interactive SSH sessions also refresh OS family/version and reboot-required state
 - `GET /api/vms/:id/update-feed` gives an on-demand package change feed for Ubuntu, Debian, Kali, and Windows, including security candidates when classification is available and kernel/core/cumulative/servicing-stack highlights
 - `GET /api/metrics/traffic` gives in-memory frontend/backend API traffic buckets for the dashboard
 - `FG-VM` is treated as critical lab infrastructure and routine stop actions are guarded unless an explicit override is provided
+- VM SSH passwords are no longer returned from the API; they are stored separately in encrypted form and looked up only when a backend workflow needs them
 
 ## Setup Checklist
 
-1. Copy `src/data/inventory.example.json` to `src/data/inventory.json`
-2. Fill in:
-   - VM ids and names
-   - valid `.vmx` paths
-   - SSH host/user/port
-   - either `password` or `privateKeyPath`
-   - optional OS hints such as Ubuntu, Debian, Kali, or Windows `family` and `version`
-3. Make sure `vmrun.exe` is available where the adapter expects it
-4. Run `npx prisma generate` and `npx prisma db push`
-5. Start the backend and check `GET /api/health`
+1. Make sure `vmrun.exe` is available where the adapter expects it
+2. Run `npx prisma generate` and `npx prisma db push`
+3. Start the backend and check `GET /api/health`
+4. Add VMs through the UI or `POST /api/vms`
+5. For SSH-enabled workflows, fill in host/user/port plus password or private key path
+6. Set `osFamily` and optional `osVersion` so update and feed workflows choose the right command path
+
+## Secret Storage
+
+If you use password-based SSH workflows, set a dedicated encryption key:
+
+```text
+PCM_SECRET_KEY=replace-this-with-a-long-random-secret
+```
+
+The backend uses that key to encrypt stored VM SSH passwords at rest. If `PCM_SECRET_KEY` is not set, PCM falls back to the API token for local convenience, which is acceptable for a dev/homelab setup but not ideal for a more serious deployment.
 
 ## Update Flow
 

@@ -2,6 +2,7 @@ import { prisma } from "../../core/prisma";
 import { vmStart, vmStop, vmSnapshot, vmReboot } from "../../adapters/vmware.adapter";
 import { logJob } from "../job.service";
 import { executeSSH } from "../../adapters/ssh.adapter";
+import { getVmSshPassword } from "../../services/vm-secret.service";
 
 function getOsFamilyName(osFamily: string | null | undefined) {
   return osFamily?.trim().toLowerCase() ?? "";
@@ -121,6 +122,8 @@ async function handleVmOsUpdate(jobId: string, vm: any, payload: any) {
     throw new Error("VM SSH not configured");
   }
 
+  const sshPassword = await getVmSshPassword(vm.id);
+
   const osFamily = inferOsFamilyFromVm(vm);
   if (!isAptManagedOs(osFamily) && !isWindowsManagedOs(osFamily)) {
     throw new Error("VM OS update is currently supported only for apt-managed Linux VMs and Windows VMs");
@@ -133,7 +136,7 @@ async function handleVmOsUpdate(jobId: string, vm: any, payload: any) {
     return;
   }
 
-  if (!vm.sshPassword) {
+  if (!sshPassword) {
     throw new Error("VM update requires an SSH password because sudo -S is used for homelab patching");
   }
 
@@ -206,10 +209,10 @@ async function handleVmOsUpdate(jobId: string, vm: any, payload: any) {
       port: vm.sshPort || 22,
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
-      password: vm.sshPassword ?? undefined,
+      password: sshPassword ?? undefined,
       command: updateCommand,
       timeoutMs: 10 * 60 * 1000,
-      stdinData: `${vm.sshPassword}\n`,
+      stdinData: `${sshPassword}\n`,
       onStdout: (chunk) => {
         pendingStdout += chunk;
       },
@@ -254,6 +257,8 @@ async function handleWindowsUpdate(jobId: string, vm: any, mode: "security" | "f
   await logJob(jobId, `Running Windows update on ${vm.name}`);
   await logJob(jobId, "Update provider: Windows Update Agent over PowerShell/SSH");
   await logJob(jobId, `Update mode: ${mode}`);
+
+  const sshPassword = await getVmSshPassword(vm.id);
 
   const updateCommand = [
     "powershell",
@@ -329,7 +334,7 @@ async function handleWindowsUpdate(jobId: string, vm: any, mode: "security" | "f
       port: vm.sshPort || 22,
       username: vm.sshUser,
       privateKeyPath: vm.sshKeyPath ?? undefined,
-      password: vm.sshPassword ?? undefined,
+      password: sshPassword ?? undefined,
       command: updateCommand,
       timeoutMs: 30 * 60 * 1000,
       onStdout: (chunk) => {

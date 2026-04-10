@@ -195,8 +195,9 @@ These files improve consistency, but they are not what makes the plugin function
 ## Notes
 
 - `pcm_ssh_exec` still goes through your backend approval and SSH policy logic.
-- `pcm_create_vm` registers a VM in the PCM database with a generic OS family; it does not edit `inventory.json`.
-- `pcm_update_vm_settings` updates the database record for an existing VM, including VMX path, OS family, tags, and SSH workflow fields; it also does not edit `inventory.json`.
+- `pcm_create_vm` registers a VM directly in the PCM database, which is now the source of truth for inventory.
+- `pcm_update_vm_settings` updates the database record for an existing VM, including VMX path, OS family, tags, and SSH workflow fields.
+- SSH passwords supplied through these tools are treated as write-only inputs by the backend and stored in encrypted form for later backend workflows.
 - `pcm_start_vm` and `pcm_stop_vm` create normal backend jobs, so the dashboard and OpenClaw stay in sync.
 - `pcm_update_vm` queues a managed update job for Ubuntu, Debian, Kali, or Windows through the same backend job and audit flow.
 - `pcm_get_update_feed` retrieves an on-demand package change feed with security, kernel, cumulative, servicing-stack, and other critical-package highlights before patching when classification is available.

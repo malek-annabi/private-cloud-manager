@@ -20,6 +20,7 @@ Today the system provides:
 - an on-demand security change feed that surfaces kernel and critical package changes before patching
 - live frontend-to-backend API traffic telemetry in the dashboard
 - automatic OS metadata refresh on interactive SSH connect
+- encrypted-at-rest VM SSH password storage with write-only UI fields
 - an OpenClaw plugin for local AI-assisted operations through Ollama
 - a planned runbook layer for controlled natural-language lab workflows
 - first lab preset actions for Blue Team, Red Team, Purple Team, and WG-VPN
@@ -48,7 +49,7 @@ The backend is built with Express, TypeScript, Prisma, SQLite, `ssh2`, `ws`, and
 
 It is responsible for:
 
-- normalizing inventory into the local database
+- storing and serving the database-backed VM inventory
 - exposing VM, job, audit, and SSH readiness APIs
 - executing VM lifecycle operations
 - running background workers for job processing
@@ -74,7 +75,7 @@ This keeps the AI layer on the same backend pathways as the human UI instead of 
 
 The current operator flow is:
 
-1. VM metadata is defined in the local inventory and loaded into the backend database.
+1. VM metadata is registered directly in the backend database through the UI, API, or OpenClaw tools.
 2. The frontend lists VMs, jobs, and audit activity from backend APIs.
 3. Start and stop requests become jobs that are processed by the worker.
 4. The frontend polls for updates and surfaces state, logs, and timestamps.
@@ -94,7 +95,7 @@ The dashboard now shows:
 - when a VM last accepted an interactive SSH login
 - the latest detected OS version after SSH contact or managed updates
 
-That makes the system feel much more like a real control plane than a static inventory list.
+That makes the system feel much more like a real control plane than a static inventory list. The database is now the only source of truth for VM records, so backend restarts no longer overwrite edits from a startup inventory file.
 
 ### Job Visibility
 

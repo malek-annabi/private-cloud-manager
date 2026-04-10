@@ -4,10 +4,9 @@ import { createApp } from "./app";
 import { config } from "./core/config";
 import { logger } from "./core/logger";
 import { prisma } from "./core/prisma";
-
-import { loadInventory } from "./services/inventory.service";
 import { startWorker } from "./jobs/job.worker";
 import { startSSHServer } from "./ssh/ssh.ws";
+import { migrateLegacyVmSecrets } from "./services/vm-secret.service";
 
 const app = createApp();
 
@@ -19,8 +18,8 @@ async function start() {
     await prisma.$connect();
     logger.info("Database connected");
 
-    await loadInventory();
-    logger.info("Inventory loaded");
+    await migrateLegacyVmSecrets();
+    logger.info("VM secrets ready");
 
     startWorker();
     logger.info("Job worker started");

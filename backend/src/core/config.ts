@@ -8,4 +8,8 @@ export const config = {
   host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT) || 8000,
   apiToken: process.env.API_TOKEN || "dev-token",
+  secretKey:
+    process.env.PCM_SECRET_KEY ||
+    process.env.API_TOKEN ||
+    "dev-token",
 };

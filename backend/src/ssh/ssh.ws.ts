@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import { Client, type ConnectConfig } from "ssh2";
 import { prisma } from "../core/prisma";
 import { logger } from "../core/logger";
+import { getVmSshPassword } from "../services/vm-secret.service";
 
 export function startSSHServer(server: any) {
   const wss = new WebSocketServer({
@@ -66,6 +67,8 @@ export function startSSHServer(server: any) {
           return;
         }
 
+        const sshPassword = await getVmSshPassword(vm.id);
+
         const connectConfig: ConnectConfig = {
           host: vm.sshHost,
           port: vm.sshPort || 22,
@@ -74,8 +77,8 @@ export function startSSHServer(server: any) {
           keepaliveInterval: 10000,
         };
 
-        if (vm.sshPassword) {
-          connectConfig.password = vm.sshPassword;
+        if (sshPassword) {
+          connectConfig.password = sshPassword;
         }
 
         if (vm.sshKeyPath) {
